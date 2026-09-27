@@ -14,58 +14,81 @@ import java.util.Locale
 import kotlin.math.*
 import kotlin.random.Random
 
-class HexagonOverlayView(context: Context, private val chargeLabel: String) : View(context) {
+class HexagonOverlayView(
+    context: Context,
+    private val onUnplugged: () -> Unit
+) : View(context) {
 
     private val density = resources.displayMetrics.density
     private var basePercent: Int = getLiveStatusbarBattery()
-    private var decimalFraction: Float = 0.16f
+    private var decimalFraction: Float = 0.00f
+
+    // Live Metrics
+    private var liveWatts: Float = 0f
+    private var liveTempC: Float = 0f
+    private var chargeTitle: String = "CHARGING"
 
     private var tickerAnimator: ValueAnimator? = null
 
-    // Live battery listener to keep it 100% synchronized with the status bar
     private val batteryReceiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context?, intent: Intent?) {
-            val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+            if (intent == null) return
+
+            // 1. Instantly dismiss if cable is unplugged
+            val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+            val plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1)
+            if (status != BatteryManager.BATTERY_STATUS_CHARGING && plugged == 0) {
+                onUnplugged()
+                return
+            }
+
+            // 2. Sync Real Battery Level
+            val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
             if (level > 0 && level != basePercent) {
                 basePercent = level
-                invalidate()
+                decimalFraction = 0.00f
+                restartTicker()
             }
+
+            // 3. Live Temperature (°C)
+            val tempRaw = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0)
+            liveTempC = tempRaw / 10.0f
+
+            // 4. Live Wattage & Fast Charge Title
+            updatePowerMetrics(plugged)
+            invalidate()
         }
     }
 
     private val hexPath = Path()
-    private val primaryWavePath = Path()
-    private val secondaryWavePath = Path()
+    private val wavePath1 = Path()
+    private val wavePath2 = Path()
     private val radialDimPaint = Paint().apply { isAntiAlias = true }
 
-    // Outer Dark Red Rim Frame
     private val hexRimPaint = Paint().apply {
-        color = Color.parseColor("#240407") // Deep void crimson
+        color = Color.parseColor("#260407")
         style = Paint.Style.STROKE
         strokeWidth = 9f * density
         isAntiAlias = true
         pathEffect = CornerPathEffect(14f * density)
     }
 
-    // Inner Hot Red Hexagon Outline
     private val hexBorderPaint = Paint().apply {
-        color = Color.parseColor("#55FF0033")
+        color = Color.parseColor("#44FF0033")
         style = Paint.Style.STROKE
         strokeWidth = 2.5f * density
         isAntiAlias = true
         pathEffect = CornerPathEffect(12f * density)
     }
 
-    // Intense Red Electrical Plasma Outer Glow
-    private val redOuterGlowPaint = Paint().apply {
-        color = Color.parseColor("#FF0033") // Neon Electric Red
+    private val redGlowPaint = Paint().apply {
+        color = Color.parseColor("#FF0033")
         style = Paint.Style.STROKE
-        strokeWidth = 4.5f * density
+        strokeWidth = 4.2f * density
         isAntiAlias = true
         setShadowLayer(18f * density, 0f, 0f, Color.parseColor("#FF1744"))
     }
 
-    // Secondary Chaotic Red Spark Wave
     private val redArcPaint = Paint().apply {
         color = Color.parseColor("#FF1744")
         style = Paint.Style.STROKE
@@ -74,15 +97,13 @@ class HexagonOverlayView(context: Context, private val chargeLabel: String) : Vi
         setShadowLayer(10f * density, 0f, 0f, Color.parseColor("#FF5252"))
     }
 
-    // White-Hot Electrical Plasma Core
-    private val lightningCorePaint = Paint().apply {
-        color = Color.parseColor("#FFF0F2") // Ultra hot white-red core
+    private val whiteCorePaint = Paint().apply {
+        color = Color.parseColor("#FFF0F2")
         style = Paint.Style.STROKE
-        strokeWidth = 1.3f * density
+        strokeWidth = 1.2f * density
         isAntiAlias = true
     }
 
-    // Red Laser Tracer Guide to Fingerprint Sensor
     private val laserPaint = Paint().apply {
         style = Paint.Style.STROKE
         strokeWidth = 1.4f * density
@@ -96,7 +117,6 @@ class HexagonOverlayView(context: Context, private val chargeLabel: String) : Vi
         color = Color.parseColor("#66FF0033")
     }
 
-    // Crisp 4-Digit Battery Text with Deep Red Ambient Glow
     private val textPaint = Paint().apply {
         color = Color.WHITE
         textSize = 38f * density
@@ -106,15 +126,23 @@ class HexagonOverlayView(context: Context, private val chargeLabel: String) : Vi
         setShadowLayer(22f * density, 0f, 0f, Color.parseColor("#FF0033"))
     }
 
-    // MAX CHARGE Badge (Electric Crimson Gold)
     private val labelPaint = Paint().apply {
         color = Color.parseColor("#FF1744")
-        textSize = 13f * density
+        textSize = 12f * density
         isFakeBoldText = true
         textAlign = Paint.Align.CENTER
         isAntiAlias = true
-        letterSpacing = 0.22f
+        letterSpacing = 0.18f
         setShadowLayer(10f * density, 0f, 0f, Color.parseColor("#FF0033"))
+    }
+
+    private val telemetryPaint = Paint().apply {
+        color = Color.parseColor("#FFAAA0")
+        textSize = 11f * density
+        isFakeBoldText = true
+        textAlign = Paint.Align.CENTER
+        isAntiAlias = true
+        letterSpacing = 0.15f
     }
 
     private fun getLiveStatusbarBattery(): Int {
@@ -123,9 +151,31 @@ class HexagonOverlayView(context: Context, private val chargeLabel: String) : Vi
         if (hardwareCapacity in 1..100) return hardwareCapacity
 
         val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: 97
-        val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
-        return ((level.toFloat() / scale.toFloat()) * 100f).toInt()
+        return intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, 88) ?: 88
+    }
+
+    private fun updatePowerMetrics(plugged: Int) {
+        val bm = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+        
+        // Microamperes (uA)
+        val currentUa = abs(bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW))
+        
+        // Voltage in Millivolts (mV)
+        val bIntent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val voltageMv = bIntent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 4000) ?: 4000
+
+        // Calculate real Watts (P = V * I)
+        if (currentUa > 0 && voltageMv > 0) {
+            val amps = currentUa / 1_000_000f
+            val volts = voltageMv / 1_000f
+            liveWatts = volts * amps
+        }
+
+        chargeTitle = when {
+            liveWatts >= 30f || plugged == BatteryManager.BATTERY_PLUGGED_AC -> "MAX CHARGE"
+            plugged == BatteryManager.BATTERY_PLUGGED_WIRELESS -> "WIRELESS TURBO"
+            else -> "FAST CHARGE"
+        }
     }
 
     override fun onAttachedToWindow() {
@@ -143,14 +193,19 @@ class HexagonOverlayView(context: Context, private val chargeLabel: String) : Vi
             e.printStackTrace()
         }
 
-        // 60FPS High-speed electrical plasma wave cycle
+        restartTicker()
+    }
+
+    private fun restartTicker() {
+        tickerAnimator?.cancel()
+        // Ticks from .00 to .99 based on charging progression
         tickerAnimator = ValueAnimator.ofFloat(0.00f, 0.99f).apply {
-            duration = 3600
+            duration = 5000 // Real-time progressive tick speed
             repeatCount = ValueAnimator.INFINITE
             interpolator = LinearInterpolator()
             addUpdateListener {
                 decimalFraction = it.animatedValue as Float
-                invalidate() // Triggers real-time crazy lightning update
+                invalidate()
             }
         }
         tickerAnimator?.start()
@@ -182,7 +237,7 @@ class HexagonOverlayView(context: Context, private val chargeLabel: String) : Vi
         )
         canvas.drawCircle(cx, cy, radius * 1.65f, radialDimPaint)
 
-        // 2. Calculate the 6 vertices of the hexagon
+        // 2. Compute 6 hexagon vertices
         val vx = FloatArray(6)
         val vy = FloatArray(6)
         hexPath.reset()
@@ -196,17 +251,16 @@ class HexagonOverlayView(context: Context, private val chargeLabel: String) : Vi
         }
         hexPath.close()
 
-        // 3. Draw Base Hexagon Frames
         canvas.drawPath(hexPath, hexRimPaint)
         canvas.drawPath(hexPath, hexBorderPaint)
 
-        // 4. Draw Crazy Red Electrical Wave across all 6 sides
+        // 3. Draw All-Red Crazy Electrical Wave
         for (i in 0 until 6) {
             val next = (i + 1) % 6
             drawCrazyElectricalWave(canvas, vx[i], vy[i], vx[next], vy[next])
         }
 
-        // 5. Vertical Red Laser Guide Line (Shooting straight to fingerprint sensor)
+        // 4. Vertical Red Laser Guide Line
         val bottomTipX = vx[3]
         val bottomTipY = vy[3]
         val fingerprintTargetY = height * 0.81f
@@ -220,16 +274,20 @@ class HexagonOverlayView(context: Context, private val chargeLabel: String) : Vi
         canvas.drawLine(bottomTipX, bottomTipY + (4f * density), bottomTipX, fingerprintTargetY, laserGlowPaint)
         canvas.drawLine(bottomTipX, bottomTipY + (4f * density), bottomTipX, fingerprintTargetY, laserPaint)
 
-        // 6. 100% Synchronized Status Bar Percentage
-        val totalPercentage = basePercent.toFloat() + decimalFraction
-        val formattedPercent = String.format(Locale.US, "%05.2f%%", totalPercentage)
-        canvas.drawText(formattedPercent, cx, cy + (6f * density), textPaint)
+        // 5. Synchronized Percentage (Base + Ticker)
+        val currentDisplay = basePercent.toFloat() + decimalFraction
+        val formattedPercent = String.format(Locale.US, "%05.2f%%", currentDisplay)
+        canvas.drawText(formattedPercent, cx, cy + (4f * density), textPaint)
 
-        // 7. MAX CHARGE Indicator
-        canvas.drawText("⚡ $chargeLabel", cx, cy + (34f * density), labelPaint)
+        // 6. Charging Mode Title (Cleaned up, no double bolts)
+        canvas.drawText("⚡ $chargeTitle", cx, cy + (26f * density), labelPaint)
+
+        // 7. Live Hardware Telemetry: Watts & Temperature
+        val wattText = if (liveWatts > 0f) String.format(Locale.US, "%.1fW", liveWatts) else "--W"
+        val tempText = if (liveTempC > 0f) String.format(Locale.US, "%.1f°C", liveTempC) else "--°C"
+        canvas.drawText("$wattText  •  $tempText", cx, cy + (44f * density), telemetryPaint)
     }
 
-    // High-energy chaotic dual-path red lightning wave generator
     private fun drawCrazyElectricalWave(canvas: Canvas, x1: Float, y1: Float, x2: Float, y2: Float) {
         val dx = x2 - x1
         val dy = y2 - y1
@@ -237,37 +295,33 @@ class HexagonOverlayView(context: Context, private val chargeLabel: String) : Vi
         val ny = dx
         val len = sqrt(nx * nx + ny * ny)
 
-        // --- Wave Path 1: High-amplitude erratic main strike ---
-        primaryWavePath.reset()
-        primaryWavePath.moveTo(x1, y1)
-        val segments1 = 6
-        for (s in 1 until segments1) {
-            val px = x1 + (dx / segments1) * s
-            val py = y1 + (dy / segments1) * s
-            // Wild perpendicular jitter
+        // Primary erratic strike
+        wavePath1.reset()
+        wavePath1.moveTo(x1, y1)
+        val segs1 = 6
+        for (s in 1 until segs1) {
+            val px = x1 + (dx / segs1) * s
+            val py = y1 + (dy / segs1) * s
             val jitter = (Random.nextFloat() - 0.5f) * (26f * density)
-            primaryWavePath.lineTo(px + (nx / len) * jitter, py + (ny / len) * jitter)
+            wavePath1.lineTo(px + (nx / len) * jitter, py + (ny / len) * jitter)
         }
-        primaryWavePath.lineTo(x2, y2)
+        wavePath1.lineTo(x2, y2)
 
-        // Render Wave 1 (Deep Red Neon + White Hot Core)
-        canvas.drawPath(primaryWavePath, redOuterGlowPaint)
-        canvas.drawPath(primaryWavePath, redArcPaint)
-        canvas.drawPath(primaryWavePath, lightningCorePaint)
+        canvas.drawPath(wavePath1, redGlowPaint)
+        canvas.drawPath(wavePath1, redArcPaint)
+        canvas.drawPath(wavePath1, whiteCorePaint)
 
-        // --- Wave Path 2: Secondary erratic spark wave surging around the rim ---
-        secondaryWavePath.reset()
-        secondaryWavePath.moveTo(x1, y1)
-        val segments2 = 4
-        for (s in 1 until segments2) {
-            val px = x1 + (dx / segments2) * s
-            val py = y1 + (dy / segments2) * s
+        // Secondary wild sparks
+        wavePath2.reset()
+        wavePath2.moveTo(x1, y1)
+        val segs2 = 4
+        for (s in 1 until segs2) {
+            val px = x1 + (dx / segs2) * s
+            val py = y1 + (dy / segs2) * s
             val jitter = (Random.nextFloat() - 0.5f) * (16f * density)
-            secondaryWavePath.lineTo(px + (nx / len) * jitter, py + (ny / len) * jitter)
+            wavePath2.lineTo(px + (nx / len) * jitter, py + (ny / len) * jitter)
         }
-        secondaryWavePath.lineTo(x2, y2)
-
-        // Render Wave 2 (Crimson Arcs)
-        canvas.drawPath(secondaryWavePath, redArcPaint)
+        wavePath2.lineTo(x2, y2)
+        canvas.drawPath(wavePath2, redArcPaint)
     }
 }

@@ -18,10 +18,33 @@ class ChargingService : Service() {
     private val powerReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
+
+
+
+cat << 'EOF' > app/src/main/java/com/redmagic/neocharge/animation/ChargingService.kt
+package com.redmagic.neocharge.animation
+
+import android.app.*
+import android.content.*
+import android.graphics.PixelFormat
+import android.os.*
+import android.view.*
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+
+class ChargingService : Service() {
+
+    private lateinit var windowManager: WindowManager
+    private var overlayView: View? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+    private val prefs by lazy { getSharedPreferences("neocharge_prefs", Context.MODE_PRIVATE) }
+
+    private val powerReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
                 Intent.ACTION_POWER_CONNECTED -> {
                     wakeUpScreen()
-                    val chargeType = getChargeType(context)
-                    showLockscreenAnimation(chargeType)
+                    showLockscreenAnimation()
                 }
                 Intent.ACTION_POWER_DISCONNECTED -> {
                     removeOverlay()
@@ -58,7 +81,7 @@ class ChargingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == "PREVIEW_ANIMATION") {
             wakeUpScreen()
-            showLockscreenAnimation("⚡ MAX CHARGE")
+            showLockscreenAnimation()
         }
         return START_STICKY
     }
@@ -66,29 +89,16 @@ class ChargingService : Service() {
     private fun wakeUpScreen() {
         try {
             if (wakeLock?.isHeld == false) {
-                wakeLock?.acquire(5000) // Wakes screen for 5s
+                wakeLock?.acquire(4000)
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
     }
 
-    private fun getChargeType(context: Context?): String {
-        val batteryIntent = context?.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        val plugged = batteryIntent?.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1) ?: -1
-
-        return when (plugged) {
-            BatteryManager.BATTERY_PLUGGED_AC -> "⚡ MAX CHARGE"
-            BatteryManager.BATTERY_PLUGGED_WIRELESS -> "⚡ WIRELESS TURBO"
-            BatteryManager.BATTERY_PLUGGED_USB -> "⚡ USB CHARGING"
-            else -> "⚡ CHARGING"
-        }
-    }
-
-    private fun showLockscreenAnimation(chargeLabel: String) {
+    private fun showLockscreenAnimation() {
         if (overlayView != null) return
 
-        // Flags to mount directly over the Keyguard / Lock Screen
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -97,16 +107,19 @@ class ChargingService : Service() {
             WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL, // Allows fingerprint touches to pass through
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.CENTER
         }
 
-        val customView = HexagonOverlayView(this, chargeLabel)
+        val customView = HexagonOverlayView(this) {
+            // Callback when hardware reports unpowered
+            removeOverlay()
+        }
         overlayView = customView
 
-        // Tapping the animation dismisses it so you can unlock anytime
+        // Single tap manual dismiss
         customView.setOnClickListener { removeOverlay() }
         windowManager.addView(customView, params)
 
@@ -133,8 +146,8 @@ class ChargingService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
 
         return NotificationCompat.Builder(this, channelId)
-            .setContentTitle("NeoCharge Lockscreen Active")
-            .setContentText("Ready for charging events")
+            .setContentTitle("NeoCharge Active")
+            .setContentText("Monitoring charging telemetry")
             .setSmallIcon(android.R.drawable.ic_lock_idle_charging)
             .build()
     }
