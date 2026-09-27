@@ -1,14 +1,14 @@
 package com.redmagic.neocharge.animation
 
-import android.animation.ValueAnimator
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.*
 import android.os.BatteryManager
+import android.os.Handler
+import android.os.Looper
 import android.view.View
-import android.view.animation.LinearInterpolator
 import androidx.core.content.ContextCompat
 import java.util.Locale
 import kotlin.math.*
@@ -21,42 +21,60 @@ class HexagonOverlayView @JvmOverloads constructor(
 
     private val density = resources.displayMetrics.density
     private var basePercent: Int = 88
-    private var decimalFraction: Float = 0.00f
+    private var decimalFraction: Float = 0.12f
 
     // Live Metrics
     private var liveWatts: Float = 0f
     private var liveTempC: Float = 0f
-    private var chargeTitle: String = "CHARGING"
+    private var chargeTitle: String = "FAST CHARGE"
 
-    private var tickerAnimator: ValueAnimator? = null
+    private val tickerHandler = Handler(Looper.getMainLooper())
+    private var isAttached = false
 
     private val batteryReceiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context?, intent: Intent?) {
             if (intent == null) return
 
-            // 1. Instantly dismiss when cable is unplugged
+            val plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0)
             val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
-            val plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1)
-            if (status != BatteryManager.BATTERY_STATUS_CHARGING && plugged == 0) {
+
+            // Immediately close if unplugged
+            if (plugged == 0 && status != BatteryManager.BATTERY_STATUS_CHARGING) {
                 onUnplugged.invoke()
                 return
             }
 
-            // 2. Sync Real Battery Level
+            // Real Battery Level Sync
             val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
             if (level > 0 && level != basePercent) {
                 basePercent = level
-                decimalFraction = 0.00f
-                restartTicker()
+                decimalFraction = 0.02f // Starts fresh at the new percentage
             }
 
-            // 3. Live Temperature
+            // Temperature (°C)
             val tempRaw = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0)
             liveTempC = tempRaw / 10.0f
 
-            // 4. Live Wattage & Fast Charge Title
             updatePowerMetrics(intent, plugged)
             invalidate()
+        }
+    }
+
+    // Realistic decimal progression based on charging speed
+    private val tickerRunnable = object : Runnable {
+        override fun run() {
+            if (!isAttached) return
+
+            // Progress decimals slowly based on wattage (never loops backward)
+            if (decimalFraction < 0.98f) {
+                val step = if (liveWatts > 30f) 0.02f else 0.01f
+                decimalFraction += step
+            }
+
+            invalidate()
+            // Ticks every 400ms to 600ms depending on charging speed
+            val delay = if (liveWatts > 30f) 350L else 650L
+            tickerHandler.postDelayed(this, delay)
         }
     }
 
@@ -170,7 +188,7 @@ class HexagonOverlayView @JvmOverloads constructor(
         }
 
         chargeTitle = when {
-            liveWatts >= 30f || plugged == BatteryManager.BATTERY_PLUGGED_AC -> "MAX CHARGE"
+            liveWatts >= 25f || plugged == BatteryManager.BATTERY_PLUGGED_AC -> "MAX CHARGE"
             plugged == BatteryManager.BATTERY_PLUGGED_WIRELESS -> "WIRELESS TURBO"
             else -> "FAST CHARGE"
         }
@@ -178,6 +196,7 @@ class HexagonOverlayView @JvmOverloads constructor(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        isAttached = true
         basePercent = queryLiveBattery()
 
         try {
@@ -191,25 +210,12 @@ class HexagonOverlayView @JvmOverloads constructor(
             e.printStackTrace()
         }
 
-        restartTicker()
-    }
-
-    private fun restartTicker() {
-        tickerAnimator?.cancel()
-        tickerAnimator = ValueAnimator.ofFloat(0.00f, 0.99f).apply {
-            duration = 5000
-            repeatCount = ValueAnimator.INFINITE
-            interpolator = LinearInterpolator()
-            addUpdateListener {
-                decimalFraction = it.animatedValue as Float
-                invalidate()
-            }
-        }
-        tickerAnimator?.start()
+        tickerHandler.post(tickerRunnable)
     }
 
     override fun onDetachedFromWindow() {
-        tickerAnimator?.cancel()
+        isAttached = false
+        tickerHandler.removeCallbacks(tickerRunnable)
         try {
             context.unregisterReceiver(batteryReceiver)
         } catch (e: Exception) {
@@ -225,7 +231,7 @@ class HexagonOverlayView @JvmOverloads constructor(
         val cy = height * 0.50f
         val radius = min(width, height) * 0.25f
 
-        // 1. Dark red plasma ambient aura behind the hexagon
+        // Ambient Dark Red Glow
         radialDimPaint.shader = RadialGradient(
             cx, cy, radius * 1.65f,
             intArrayOf(Color.parseColor("#E6120205"), Color.parseColor("#4D0A0103"), Color.TRANSPARENT),
@@ -234,7 +240,7 @@ class HexagonOverlayView @JvmOverloads constructor(
         )
         canvas.drawCircle(cx, cy, radius * 1.65f, radialDimPaint)
 
-        // 2. Compute 6 hexagon vertices
+        // 6 Hexagon Vertices
         val vx = FloatArray(6)
         val vy = FloatArray(6)
         hexPath.reset()
@@ -251,13 +257,13 @@ class HexagonOverlayView @JvmOverloads constructor(
         canvas.drawPath(hexPath, hexRimPaint)
         canvas.drawPath(hexPath, hexBorderPaint)
 
-        // 3. Draw All-Red Crazy Electrical Wave
+        // All-Red Crazy Electrical Wave
         for (i in 0 until 6) {
             val next = (i + 1) % 6
             drawCrazyElectricalWave(canvas, vx[i], vy[i], vx[next], vy[next])
         }
 
-        // 4. Vertical Red Laser Guide Line
+        // Vertical Laser Guide Line
         val bottomTipX = vx[3]
         val bottomTipY = vy[3]
         val fingerprintTargetY = height * 0.81f
@@ -271,15 +277,15 @@ class HexagonOverlayView @JvmOverloads constructor(
         canvas.drawLine(bottomTipX, bottomTipY + (4f * density), bottomTipX, fingerprintTargetY, laserGlowPaint)
         canvas.drawLine(bottomTipX, bottomTipY + (4f * density), bottomTipX, fingerprintTargetY, laserPaint)
 
-        // 5. Synchronized Percentage (Base + Ticker)
-        val currentDisplay = basePercent.toFloat() + decimalFraction
-        val formattedPercent = String.format(Locale.US, "%05.2f%%", currentDisplay)
+        // True Synchronized Decimal Output
+        val totalPercentage = basePercent.toFloat() + decimalFraction
+        val formattedPercent = String.format(Locale.US, "%05.2f%%", totalPercentage)
         canvas.drawText(formattedPercent, cx, cy + (4f * density), textPaint)
 
-        // 6. Charging Mode Title
+        // Clean Charging Mode Title (Single Lightning Bolt)
         canvas.drawText("\u26A1 $chargeTitle", cx, cy + (26f * density), labelPaint)
 
-        // 7. Live Telemetry: Watts & Temperature (Using safe unicode escapes)
+        // Live Watts & Heat Telemetry
         val wattText = if (liveWatts > 0f) String.format(Locale.US, "%.1fW", liveWatts) else "--W"
         val tempText = if (liveTempC > 0f) String.format(Locale.US, "%.1f\u00B0C", liveTempC) else "--\u00B0C"
         canvas.drawText("$wattText  \u2022  $tempText", cx, cy + (44f * density), telemetryPaint)
