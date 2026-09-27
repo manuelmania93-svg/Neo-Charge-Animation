@@ -12,17 +12,18 @@ class ChargingService : Service() {
 
     private lateinit var windowManager: WindowManager
     private var overlayView: View? = null
+    private var wakeLock: PowerManager.WakeLock? = null
     private val prefs by lazy { getSharedPreferences("neocharge_prefs", Context.MODE_PRIVATE) }
 
     private val powerReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 Intent.ACTION_POWER_CONNECTED -> {
+                    wakeUpScreen()
                     val chargeType = getChargeType(context)
-                    showOverlay(chargeType)
+                    showLockscreenAnimation(chargeType)
                 }
                 Intent.ACTION_POWER_DISCONNECTED -> {
-                    // Instantly removes overlay when you unplug cable
                     removeOverlay()
                 }
             }
@@ -32,6 +33,12 @@ class ChargingService : Service() {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+
+        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(
+            PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+            "neocharge:lockscreen_wake"
+        )
 
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_POWER_CONNECTED)
@@ -50,9 +57,20 @@ class ChargingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == "PREVIEW_ANIMATION") {
-            showOverlay("⚡ TEST PREVIEW")
+            wakeUpScreen()
+            showLockscreenAnimation("⚡ MAX CHARGE")
         }
         return START_STICKY
+    }
+
+    private fun wakeUpScreen() {
+        try {
+            if (wakeLock?.isHeld == false) {
+                wakeLock?.acquire(5000) // Wakes screen for 5s
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun getChargeType(context: Context?): String {
@@ -67,29 +85,31 @@ class ChargingService : Service() {
         }
     }
 
-    private fun showOverlay(chargeLabel: String) {
+    private fun showLockscreenAnimation(chargeLabel: String) {
         if (overlayView != null) return
 
+        // Flags to mount directly over the Keyguard / Lock Screen
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
             WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL, // Allows fingerprint touches to pass through
             PixelFormat.TRANSLUCENT
-        )
+        ).apply {
+            gravity = Gravity.CENTER
+        }
 
         val customView = HexagonOverlayView(this, chargeLabel)
         overlayView = customView
 
-        // Single tap dismisses manually anytime you need into your phone
+        // Tapping the animation dismisses it so you can unlock anytime
         customView.setOnClickListener { removeOverlay() }
         windowManager.addView(customView, params)
 
-        // Check user setting: only auto-dismiss if Permanent Mode is toggled OFF
         val isPermanent = prefs.getBoolean("perm_mode", true)
         if (!isPermanent) {
             Handler(Looper.getMainLooper()).postDelayed({
@@ -113,8 +133,8 @@ class ChargingService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
 
         return NotificationCompat.Builder(this, channelId)
-            .setContentTitle("NeoCharge Active")
-            .setContentText("Listening for power connections")
+            .setContentTitle("NeoCharge Lockscreen Active")
+            .setContentText("Ready for charging events")
             .setSmallIcon(android.R.drawable.ic_lock_idle_charging)
             .build()
     }
@@ -123,6 +143,7 @@ class ChargingService : Service() {
 
     override fun onDestroy() {
         unregisterReceiver(powerReceiver)
+        wakeLock?.let { if (it.isHeld) it.release() }
         super.onDestroy()
     }
 }
