@@ -13,5 +13,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "BackVibrate"
+rootProject.name = "NeoCharge Animation"
 include(":app")
