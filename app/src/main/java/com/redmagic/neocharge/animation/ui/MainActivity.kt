@@ -1,4 +1,4 @@
-package com.redmagic.neocharge.animation
+package com.redmagic.neocharge.animation.ui
 
 import android.app.Activity
 import android.content.Context
@@ -13,6 +13,7 @@ import android.view.Gravity
 import android.view.View
 import android.widget.*
 import androidx.core.content.ContextCompat
+import com.redmagic.neocharge.animation.service.ChargingService
 
 class MainActivity : Activity() {
 
@@ -21,7 +22,6 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Root AMOLED Black Background
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#09090C"))
@@ -33,9 +33,8 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.parseColor("#09090C"))
         }
 
-        // --- Cyberpunk Header ---
         val title = TextView(this).apply {
-            text = "⚡ NEO CHARGE"
+            text = "\u26A1 NEO CHARGE"
             textSize = 28f
             setTextColor(Color.parseColor("#FF2244"))
             typeface = android.graphics.Typeface.DEFAULT_BOLD
@@ -44,7 +43,7 @@ class MainActivity : Activity() {
         }
 
         val subtitle = TextView(this).apply {
-            text = "CYBER HUD OVERLAY ENGINE"
+            text = "HARDWARE TELEMETRY ENGINE"
             textSize = 12f
             setTextColor(Color.parseColor("#888899"))
             gravity = Gravity.CENTER_HORIZONTAL
@@ -55,16 +54,14 @@ class MainActivity : Activity() {
         root.addView(title)
         root.addView(subtitle)
 
-        // --- Card 1: Permissions ---
         val permCard = createCyberCard()
-        val permTitle = createSectionTitle("SYSTEM PERMISSIONS")
-        permCard.addView(permTitle)
+        permCard.addView(createSectionTitle("SYSTEM PERMISSIONS"))
 
         val btnOverlay = createCyberButton("1. ALLOW 'APPEAR ON TOP'", "#FF1E38") {
             if (!Settings.canDrawOverlays(this)) {
                 startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
             } else {
-                Toast.makeText(this, "Appear On Top Granted! ✓", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Appear On Top Granted! \u2713", Toast.LENGTH_SHORT).show()
             }
         }
         permCard.addView(btnOverlay)
@@ -74,21 +71,19 @@ class MainActivity : Activity() {
             if (!pm.isIgnoringBatteryOptimizations(packageName)) {
                 startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
             } else {
-                Toast.makeText(this, "Battery Exemption Active! ✓", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Battery Exemption Active! \u2713", Toast.LENGTH_SHORT).show()
             }
         }
         permCard.addView(btnBattery)
         root.addView(permCard)
 
-        // Spacer
         root.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(1, 35) })
 
-        // --- Card 2: Display Options ---
         val optCard = createCyberCard()
         optCard.addView(createSectionTitle("OVERLAY BEHAVIOR"))
 
         val switchPermanent = Switch(this).apply {
-            text = "Keep Screen On Permanently While Charging"
+            text = "Stay Visible While Charging"
             setTextColor(Color.WHITE)
             textSize = 14f
             isChecked = prefs.getBoolean("perm_mode", true)
@@ -100,23 +95,20 @@ class MainActivity : Activity() {
         optCard.addView(switchPermanent)
 
         val descText = TextView(this).apply {
-            text = "When ON, stays glowing on your screen until cable is unplugged (tap anywhere to hide)."
+            text = "Stays glowing until unplugged (tap anywhere or unplug to close)."
             textSize = 11f
             setTextColor(Color.parseColor("#777788"))
             setPadding(0, 0, 0, 20)
         }
         optCard.addView(descText)
-
         root.addView(optCard)
 
-        // Spacer
         root.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(1, 40) })
 
-        // --- Card 3: Actions ---
         val btnActivate = createCyberButton("ARM NEOCHARGE ENGINE", "#E60026") {
             val intent = Intent(this, ChargingService::class.java)
             ContextCompat.startForegroundService(this, intent)
-            Toast.makeText(this, "⚡ NeoCharge Armed & Ready!", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "\u26A1 NeoCharge Armed & Ready!", Toast.LENGTH_LONG).show()
         }
         root.addView(btnActivate)
 
@@ -137,7 +129,7 @@ class MainActivity : Activity() {
             setPadding(40, 40, 40, 40)
             background = GradientDrawable().apply {
                 setColor(Color.parseColor("#121218"))
-                setStroke(3, Color.parseColor("#331822")) // Dark crimson border
+                setStroke(3, Color.parseColor("#331822"))
                 cornerRadius = 24f
             }
         }
