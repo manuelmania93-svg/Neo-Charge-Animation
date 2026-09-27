@@ -50,61 +50,7 @@ class ChargingService : Service() {
             val computedState = physicsIntegrator.update(rawData, deltaSec.coerceIn(0.016f, 0.1f))
 
             overlayController.updateTelemetry(computedState)
-            tickerHandler.po
-cat << 'EOF' > app/src/main/java/com/redmagic/neocharge/animation/service/ChargingService.kt
-package com.redmagic.neocharge.animation.service
-
-import android.app.*
-import android.content.*
-import android.os.*
-import androidx.core.app.NotificationCompat
-import androidx.core.content.ContextCompat
-import com.redmagic.neocharge.animation.core.BatteryHardwareProvider
-import com.redmagic.neocharge.animation.core.BatteryPhysicsIntegrator
-
-class ChargingService : Service() {
-
-    private lateinit var hardwareProvider: BatteryHardwareProvider
-    private lateinit var physicsIntegrator: BatteryPhysicsIntegrator
-    private lateinit var overlayController: OverlayController
-    private var wakeLock: PowerManager.WakeLock? = null
-
-    private val tickerHandler = Handler(Looper.getMainLooper())
-    private var lastFrameTime = System.currentTimeMillis()
-    private var isPreviewSession = false
-
-    private val powerReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            when (intent?.action) {
-                Intent.ACTION_POWER_CONNECTED -> {
-                    wakeUpScreen()
-                    startChargingSession(isPreview = false)
-                }
-                Intent.ACTION_POWER_DISCONNECTED -> {
-                    stopChargingSession()
-                }
-            }
-        }
-    }
-
-    private val telemetryLoop = object : Runnable {
-        override fun run() {
-            if (!overlayController.isShowing()) return
-
-            val now = System.currentTimeMillis()
-            val deltaSec = (now - lastFrameTime) / 1000f
-            lastFrameTime = now
-
-            if (!isPreviewSession && !hardwareProvider.isChargerPhysicallyConnected()) {
-                stopChargingSession()
-                return
-            }
-
-            val rawData = hardwareProvider.readHardwareTelemetry(null)
-            val computedState = physicsIntegrator.update(rawData, deltaSec.coerceIn(0.016f, 0.1f))
-
-            overlayController.updateTelemetry(computedState)
-            tickerHandler.postDelayed(this, 16L) // 60 FPS
+            tickerHandler.postDelayed(this, 16L)
         }
     }
 

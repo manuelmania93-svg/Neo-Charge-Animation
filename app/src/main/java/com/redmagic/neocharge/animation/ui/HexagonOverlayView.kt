@@ -21,177 +21,186 @@ class HexagonOverlayView(
     private val wavePath2 = Path()
     private val radialDimPaint = Paint().apply { isAntiAlias = true }
 
-    // Outer Dark Red Rim Frame
-
-cat << 'EOF' > app/src/main/java/com/redmagic/neocharge/animation/service/OverlayController.kt
-package com.redmagic.neocharge.animation.service
-
-import android.content.Context
-import android.graphics.PixelFormat
-import android.os.*
-import android.view.*
-import com.redmagic.neocharge.animation.core.TelemetryState
-import com.redmagic.neocharge.animation.ui.HexagonOverlayView
-
-class OverlayController(private val context: Context) {
-
-    private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-    private val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-    private var overlayView: HexagonOverlayView? = null
-    private var isAttached = false
-
-    fun isShowing(): Boolean = isAttached
-
-
-
-cat << 'EOF' > app/src/main/java/com/redmagic/neocharge/animation/service/ChargingService.kt
-package com.redmagic.neocharge.animation.service
-
-import android.app.*
-import android.content.*
-import android.os.*
-import androidx.core.app.NotificationCompat
-import androidx.core.content.ContextCompat
-import com.redmagic.neocharge.animation.core.BatteryHardwareProvider
-import com.redmagic.neocharge.animation.core.BatteryPhysicsIntegrator
-
-class ChargingService : Service() {
-
-    private lateinit var hardwareProvider: BatteryHardwareProvider
-    private lateinit var physicsIntegrator: BatteryPhysicsIntegrator
-    private lateinit var overlayController: OverlayController
-    private var wakeLock: PowerManager.WakeLock? = null
-
-    private val tickerHandler = Handler(Looper.getMainLooper())
-    private var lastFrameTime = System.currentTimeMillis()
-    private var isPreviewSession = false
-
-    private val powerReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            when (intent?.action) {
-                Intent.ACTION_POWER_CONNECTED -> {
-                    wakeUpScreen()
-                    startChargingSession(isPreview = false)
-                }
-                Intent.ACTION_POWER_DISCONNECTED -> {
-                    stopChargingSession()
-                }
-            }
-        }
+    private val hexRimPaint = Paint().apply {
+        color = Color.parseColor("#260407")
+        style = Paint.Style.STROKE
+        strokeWidth = 9f * density
+        isAntiAlias = true
+        pathEffect = CornerPathEffect(14f * density)
     }
 
-    // 60FPS physics loop & heartbeat disconnect guard
-    private val telemetryLoop = object : Runnable {
-        override fun run() {
-            if (!overlayController.isShowing()) return
-
-            val now = System.currentTimeMillis()
-            val deltaSec = (now - lastFrameTime) / 1000f
-            lastFrameTime = now
-
-            // Unplug Guard: if not in preview and phone physically disconnected, kill immediately
-            if (!isPreviewSession && !hardwareProvider.isChargerPhysicallyConnected()) {
-                stopChargingSession()
-                return
-            }
-
-            val rawData = hardwareProvider.readHardwareTelemetry(null)
-            val computedState = physicsIntegrator.update(rawData, deltaSec.coerceIn(0.016f, 0.1f))
-
-            overlayController.updateTelemetry(computedState)
-            tickerHandler.postDelayed(this, 16L) // ~60 FPS
-        }
+    private val hexBorderPaint = Paint().apply {
+        color = Color.parseColor("#44FF0033")
+        style = Paint.Style.STROKE
+        strokeWidth = 2.5f * density
+        isAntiAlias = true
+        pathEffect = CornerPathEffect(12f * density)
     }
 
-    override fun onCreate() {
-        super.onCreate()
-        hardwareProvider = BatteryHardwareProvider(this)
-        physicsIntegrator = BatteryPhysicsIntegrator()
-        overlayController = OverlayController(this)
+    private val redGlowPaint = Paint().apply {
+        color = Color.parseColor("#FF0033")
+        style = Paint.Style.STROKE
+        strokeWidth = 4.2f * density
+        isAntiAlias = true
+        setShadowLayer(18f * density, 0f, 0f, Color.parseColor("#FF1744"))
+    }
 
-        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(
-            PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
-            "neocharge:wake_guard"
+    private val redArcPaint = Paint().apply {
+        color = Color.parseColor("#FF1744")
+        style = Paint.Style.STROKE
+        strokeWidth = 2.2f * density
+        isAntiAlias = true
+        setShadowLayer(10f * density, 0f, 0f, Color.parseColor("#FF5252"))
+    }
+
+    private val whiteCorePaint = Paint().apply {
+        color = Color.parseColor("#FFF0F2")
+        style = Paint.Style.STROKE
+        strokeWidth = 1.2f * density
+        isAntiAlias = true
+    }
+
+    private val laserPaint = Paint().apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1.4f * density
+        isAntiAlias = true
+    }
+
+    private val laserGlowPaint = Paint().apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 4.5f * density
+        isAntiAlias = true
+        color = Color.parseColor("#66FF0033")
+    }
+
+    private val textPaint = Paint().apply {
+        color = Color.WHITE
+        textSize = 38f * density
+        isFakeBoldText = true
+        textAlign = Paint.Align.CENTER
+        isAntiAlias = true
+        setShadowLayer(22f * density, 0f, 0f, Color.parseColor("#FF0033"))
+    }
+
+    private val labelPaint = Paint().apply {
+        color = Color.parseColor("#FF1744")
+        textSize = 12f * density
+        isFakeBoldText = true
+        textAlign = Paint.Align.CENTER
+        isAntiAlias = true
+        letterSpacing = 0.18f
+        setShadowLayer(10f * density, 0f, 0f, Color.parseColor("#FF0033"))
+    }
+
+    private val telemetryPaint = Paint().apply {
+        color = Color.parseColor("#FFAAA0")
+        textSize = 11f * density
+        isFakeBoldText = true
+        textAlign = Paint.Align.CENTER
+        isAntiAlias = true
+        letterSpacing = 0.15f
+    }
+
+    init {
+        setOnClickListener { onDismissRequest.invoke() }
+    }
+
+    fun submitTelemetry(state: TelemetryState) {
+        this.telemetryState = state
+        invalidate()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+
+        val cx = width / 2f
+        val cy = height * 0.50f
+        val radius = min(width, height) * 0.25f
+
+        radialDimPaint.shader = RadialGradient(
+            cx, cy, radius * 1.65f,
+            intArrayOf(Color.parseColor("#E6120205"), Color.parseColor("#4D0A0103"), Color.TRANSPARENT),
+            floatArrayOf(0.40f, 0.75f, 1.0f),
+            Shader.TileMode.CLAMP
         )
+        canvas.drawCircle(cx, cy, radius * 1.65f, radialDimPaint)
 
-        val filter = IntentFilter().apply {
-            addAction(Intent.ACTION_POWER_CONNECTED)
-            addAction(Intent.ACTION_POWER_DISCONNECTED)
+        val vx = FloatArray(6)
+        val vy = FloatArray(6)
+        hexPath.reset()
+        for (i in 0 until 6) {
+            val angle = (Math.PI / 3.0 * i) - (Math.PI / 2.0)
+            val x = (cx + radius * cos(angle)).toFloat()
+            val y = (cy + radius * sin(angle)).toFloat()
+            vx[i] = x
+            vy[i] = y
+            if (i == 0) hexPath.moveTo(x, y) else hexPath.lineTo(x, y)
+        }
+        hexPath.close()
+
+        canvas.drawPath(hexPath, hexRimPaint)
+        canvas.drawPath(hexPath, hexBorderPaint)
+
+        for (i in 0 until 6) {
+            val next = (i + 1) % 6
+            drawCrazyElectricalWave(canvas, vx[i], vy[i], vx[next], vy[next])
         }
 
-        ContextCompat.registerReceiver(
-            this,
-            powerReceiver,
-            filter,
-            ContextCompat.RECEIVER_NOT_EXPORTED
+        val bottomTipX = vx[3]
+        val bottomTipY = vy[3]
+        val fingerprintTargetY = height * 0.81f
+
+        laserPaint.shader = LinearGradient(
+            bottomTipX, bottomTipY, bottomTipX, fingerprintTargetY,
+            intArrayOf(Color.parseColor("#FF0033"), Color.parseColor("#FF1744"), Color.TRANSPARENT),
+            floatArrayOf(0.0f, 0.75f, 1.0f),
+            Shader.TileMode.CLAMP
         )
+        canvas.drawLine(bottomTipX, bottomTipY + (4f * density), bottomTipX, fingerprintTargetY, laserGlowPaint)
+        canvas.drawLine(bottomTipX, bottomTipY + (4f * density), bottomTipX, fingerprintTargetY, laserPaint)
 
-        startForeground(1, createNotification())
+        val formattedPercent = String.format(Locale.US, "%05.2f%%", telemetryState.displayPercentage)
+        canvas.drawText(formattedPercent, cx, cy + (4f * density), textPaint)
+
+        canvas.drawText("\u26A1 ${telemetryState.chargeGrade}", cx, cy + (26f * density), labelPaint)
+
+        val wattText = if (telemetryState.watts > 0f) String.format(Locale.US, "%.1fW", telemetryState.watts) else "--W"
+        val tempText = if (telemetryState.tempCelsius > 0f) String.format(Locale.US, "%.1f\u00B0C", telemetryState.tempCelsius) else "--\u00B0C"
+        canvas.drawText("$wattText  \u2022  $tempText", cx, cy + (44f * density), telemetryPaint)
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == "PREVIEW_ANIMATION") {
-            wakeUpScreen()
-            startChargingSession(isPreview = true)
+    private fun drawCrazyElectricalWave(canvas: Canvas, x1: Float, y1: Float, x2: Float, y2: Float) {
+        val dx = x2 - x1
+        val dy = y2 - y1
+        val nx = -dy
+        val ny = dx
+        val len = sqrt(nx * nx + ny * ny)
+
+        wavePath1.reset()
+        wavePath1.moveTo(x1, y1)
+        val segs1 = 6
+        for (s in 1 until segs1) {
+            val px = x1 + (dx / segs1) * s
+            val py = y1 + (dy / segs1) * s
+            val jitter = (Random.nextFloat() - 0.5f) * (26f * density)
+            wavePath1.lineTo(px + (nx / len) * jitter, py + (ny / len) * jitter)
         }
-        return START_STICKY
-    }
+        wavePath1.lineTo(x2, y2)
 
-    private fun wakeUpScreen() {
-        try {
-            if (wakeLock?.isHeld == false) {
-                wakeLock?.acquire(4000)
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
+        canvas.drawPath(wavePath1, redGlowPaint)
+        canvas.drawPath(wavePath1, redArcPaint)
+        canvas.drawPath(wavePath1, whiteCorePaint)
+
+        wavePath2.reset()
+        wavePath2.moveTo(x1, y1)
+        val segs2 = 4
+        for (s in 1 until segs2) {
+            val px = x1 + (dx / segs2) * s
+            val py = y1 + (dy / segs2) * s
+            val jitter = (Random.nextFloat() - 0.5f) * (16f * density)
+            wavePath2.lineTo(px + (nx / len) * jitter, py + (ny / len) * jitter)
         }
-    }
-
-    private fun startChargingSession(isPreview: Boolean) {
-        if (overlayController.isShowing()) return
-
-        this.isPreviewSession = isPreview
-        physicsIntegrator.reset()
-        lastFrameTime = System.currentTimeMillis()
-
-        overlayController.show(onDismissed = {
-            stopChargingSession()
-        })
-
-        tickerHandler.post(telemetryLoop)
-
-        // Previews auto-close after 6 seconds
-        if (isPreview) {
-            tickerHandler.postDelayed({ stopChargingSession() }, 6000L)
-        }
-    }
-
-    private fun stopChargingSession() {
-        tickerHandler.removeCallbacks(telemetryLoop)
-        overlayController.dismiss()
-        physicsIntegrator.reset()
-        isPreviewSession = false
-    }
-
-    private fun createNotification(): Notification {
-        val channelId = "neocharge_engine"
-        val channel = NotificationChannel(channelId, "NeoCharge Engine", NotificationManager.IMPORTANCE_MIN)
-        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
-
-        return NotificationCompat.Builder(this, channelId)
-            .setContentTitle("NeoCharge Active")
-            .setContentText("Hardware Telemetry Engine Armed")
-            .setSmallIcon(android.R.drawable.ic_lock_idle_charging)
-            .build()
-    }
-
-    override fun onBind(intent: Intent?) = null
-
-    override fun onDestroy() {
-        stopChargingSession()
-        unregisterReceiver(powerReceiver)
-        wakeLock?.let { if (it.isHeld) it.release() }
-        super.onDestroy()
+        wavePath2.lineTo(x2, y2)
+        canvas.drawPath(wavePath2, redArcPaint)
     }
 }

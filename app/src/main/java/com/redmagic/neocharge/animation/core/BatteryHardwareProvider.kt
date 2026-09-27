@@ -33,7 +33,6 @@ class BatteryHardwareProvider(private val context: Context) {
         val tempRaw = intent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0
         val voltageMv = intent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 4000) ?: 4000
 
-        // Qualcomm microamperes (uA)
         val rawCurrentUa = abs(batteryManager?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW) ?: 0)
 
         var watts = 0f
@@ -43,7 +42,6 @@ class BatteryHardwareProvider(private val context: Context) {
             watts = volts * amps
         }
 
-        // Grade label logic
         val grade = when {
             watts >= 28f || plugged == BatteryManager.BATTERY_PLUGGED_AC -> "MAX CHARGE"
             plugged == BatteryManager.BATTERY_PLUGGED_WIRELESS -> "WIRELESS TURBO"
