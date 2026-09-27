@@ -1,19 +1,10 @@
 package com.redmagic.neocharge.animation
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.Service
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
+import android.app.*
+import android.content.*
 import android.graphics.PixelFormat
-import android.os.BatteryManager
-import android.os.Handler
-import android.os.Looper
-import android.view.View
-import android.view.WindowManager
+import android.os.*
+import android.view.*
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
@@ -21,6 +12,7 @@ class ChargingService : Service() {
 
     private lateinit var windowManager: WindowManager
     private var overlayView: View? = null
+    private val prefs by lazy { getSharedPreferences("neocharge_prefs", Context.MODE_PRIVATE) }
 
     private val powerReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -30,6 +22,7 @@ class ChargingService : Service() {
                     showOverlay(chargeType)
                 }
                 Intent.ACTION_POWER_DISCONNECTED -> {
+                    // Instantly removes overlay when you unplug cable
                     removeOverlay()
                 }
             }
@@ -45,7 +38,6 @@ class ChargingService : Service() {
             addAction(Intent.ACTION_POWER_DISCONNECTED)
         }
 
-        // Required syntax for Android 13/14+ to prevent security crashes
         ContextCompat.registerReceiver(
             this,
             powerReceiver,
@@ -56,15 +48,22 @@ class ChargingService : Service() {
         startForeground(1, createNotification())
     }
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == "PREVIEW_ANIMATION") {
+            showOverlay("⚡ TEST PREVIEW")
+        }
+        return START_STICKY
+    }
+
     private fun getChargeType(context: Context?): String {
         val batteryIntent = context?.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val plugged = batteryIntent?.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1) ?: -1
 
         return when (plugged) {
-            BatteryManager.BATTERY_PLUGGED_AC -> "FAST CHARGE"
-            BatteryManager.BATTERY_PLUGGED_WIRELESS -> "WIRELESS CHARGE"
-            BatteryManager.BATTERY_PLUGGED_USB -> "USB CHARGE"
-            else -> "CHARGING"
+            BatteryManager.BATTERY_PLUGGED_AC -> "⚡ MAX CHARGE"
+            BatteryManager.BATTERY_PLUGGED_WIRELESS -> "⚡ WIRELESS TURBO"
+            BatteryManager.BATTERY_PLUGGED_USB -> "⚡ USB CHARGING"
+            else -> "⚡ CHARGING"
         }
     }
 
@@ -76,22 +75,27 @@ class ChargingService : Service() {
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
             PixelFormat.TRANSLUCENT
         )
 
         val customView = HexagonOverlayView(this, chargeLabel)
         overlayView = customView
 
+        // Single tap dismisses manually anytime you need into your phone
         customView.setOnClickListener { removeOverlay() }
         windowManager.addView(customView, params)
 
-        // Dismiss after 7.5 seconds
-        Handler(Looper.getMainLooper()).postDelayed({
-            removeOverlay()
-        }, 7500)
+        // Check user setting: only auto-dismiss if Permanent Mode is toggled OFF
+        val isPermanent = prefs.getBoolean("perm_mode", true)
+        if (!isPermanent) {
+            Handler(Looper.getMainLooper()).postDelayed({
+                removeOverlay()
+            }, 8000)
+        }
     }
 
     private fun removeOverlay() {
@@ -104,13 +108,13 @@ class ChargingService : Service() {
     }
 
     private fun createNotification(): Notification {
-        val channelId = "neocharge_listener"
-        val channel = NotificationChannel(channelId, "NeoCharge Service", NotificationManager.IMPORTANCE_MIN)
+        val channelId = "neocharge_service"
+        val channel = NotificationChannel(channelId, "NeoCharge Engine", NotificationManager.IMPORTANCE_MIN)
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
 
         return NotificationCompat.Builder(this, channelId)
             .setContentTitle("NeoCharge Active")
-            .setContentText("Monitoring charging events")
+            .setContentText("Listening for power connections")
             .setSmallIcon(android.R.drawable.ic_lock_idle_charging)
             .build()
     }
