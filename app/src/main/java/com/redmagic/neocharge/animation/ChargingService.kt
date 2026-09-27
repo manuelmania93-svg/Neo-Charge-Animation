@@ -18,30 +18,6 @@ class ChargingService : Service() {
     private val powerReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
-
-
-
-cat << 'EOF' > app/src/main/java/com/redmagic/neocharge/animation/ChargingService.kt
-package com.redmagic.neocharge.animation
-
-import android.app.*
-import android.content.*
-import android.graphics.PixelFormat
-import android.os.*
-import android.view.*
-import androidx.core.app.NotificationCompat
-import androidx.core.content.ContextCompat
-
-class ChargingService : Service() {
-
-    private lateinit var windowManager: WindowManager
-    private var overlayView: View? = null
-    private var wakeLock: PowerManager.WakeLock? = null
-    private val prefs by lazy { getSharedPreferences("neocharge_prefs", Context.MODE_PRIVATE) }
-
-    private val powerReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            when (intent?.action) {
                 Intent.ACTION_POWER_CONNECTED -> {
                     wakeUpScreen()
                     showLockscreenAnimation()
@@ -113,13 +89,11 @@ class ChargingService : Service() {
             gravity = Gravity.CENTER
         }
 
-        val customView = HexagonOverlayView(this) {
-            // Callback when hardware reports unpowered
+        val customView = HexagonOverlayView(this, onUnplugged = {
             removeOverlay()
-        }
+        })
         overlayView = customView
 
-        // Single tap manual dismiss
         customView.setOnClickListener { removeOverlay() }
         windowManager.addView(customView, params)
 

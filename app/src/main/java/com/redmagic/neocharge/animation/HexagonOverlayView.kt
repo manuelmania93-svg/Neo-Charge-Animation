@@ -14,13 +14,13 @@ import java.util.Locale
 import kotlin.math.*
 import kotlin.random.Random
 
-class HexagonOverlayView(
+class HexagonOverlayView @JvmOverloads constructor(
     context: Context,
-    private val onUnplugged: () -> Unit
+    private val onUnplugged: () -> Unit = {}
 ) : View(context) {
 
     private val density = resources.displayMetrics.density
-    private var basePercent: Int = getLiveStatusbarBattery()
+    private var basePercent: Int = 88
     private var decimalFraction: Float = 0.00f
 
     // Live Metrics
@@ -34,11 +34,11 @@ class HexagonOverlayView(
         override fun onReceive(c: Context?, intent: Intent?) {
             if (intent == null) return
 
-            // 1. Instantly dismiss if cable is unplugged
+            // 1. Instantly dismiss when cable is unplugged
             val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
             val plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1)
             if (status != BatteryManager.BATTERY_STATUS_CHARGING && plugged == 0) {
-                onUnplugged()
+                onUnplugged.invoke()
                 return
             }
 
@@ -50,12 +50,12 @@ class HexagonOverlayView(
                 restartTicker()
             }
 
-            // 3. Live Temperature (°C)
+            // 3. Live Temperature
             val tempRaw = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0)
             liveTempC = tempRaw / 10.0f
 
             // 4. Live Wattage & Fast Charge Title
-            updatePowerMetrics(plugged)
+            updatePowerMetrics(intent, plugged)
             invalidate()
         }
     }
@@ -145,29 +145,27 @@ class HexagonOverlayView(
         letterSpacing = 0.15f
     }
 
-    private fun getLiveStatusbarBattery(): Int {
-        val bm = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
-        val hardwareCapacity = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+    init {
+        basePercent = queryLiveBattery()
+    }
+
+    private fun queryLiveBattery(): Int {
+        val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+        val hardwareCapacity = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
         if (hardwareCapacity in 1..100) return hardwareCapacity
 
         val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         return intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, 88) ?: 88
     }
 
-    private fun updatePowerMetrics(plugged: Int) {
-        val bm = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
-        
-        // Microamperes (uA)
-        val currentUa = abs(bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW))
-        
-        // Voltage in Millivolts (mV)
-        val bIntent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        val voltageMv = bIntent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 4000) ?: 4000
+    private fun updatePowerMetrics(intent: Intent, plugged: Int) {
+        val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+        val currentUa = abs(bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW) ?: 0)
+        val voltageMv = intent.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 4000)
 
-        // Calculate real Watts (P = V * I)
         if (currentUa > 0 && voltageMv > 0) {
-            val amps = currentUa / 1_000_000f
-            val volts = voltageMv / 1_000f
+            val amps = currentUa / 1000000f
+            val volts = voltageMv / 1000f
             liveWatts = volts * amps
         }
 
@@ -180,7 +178,7 @@ class HexagonOverlayView(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        basePercent = getLiveStatusbarBattery()
+        basePercent = queryLiveBattery()
 
         try {
             ContextCompat.registerReceiver(
@@ -198,9 +196,8 @@ class HexagonOverlayView(
 
     private fun restartTicker() {
         tickerAnimator?.cancel()
-        // Ticks from .00 to .99 based on charging progression
         tickerAnimator = ValueAnimator.ofFloat(0.00f, 0.99f).apply {
-            duration = 5000 // Real-time progressive tick speed
+            duration = 5000
             repeatCount = ValueAnimator.INFINITE
             interpolator = LinearInterpolator()
             addUpdateListener {
@@ -242,7 +239,7 @@ class HexagonOverlayView(
         val vy = FloatArray(6)
         hexPath.reset()
         for (i in 0 until 6) {
-            val angle = (Math.PI / 3 * i) - (Math.PI / 2)
+            val angle = (Math.PI / 3.0 * i) - (Math.PI / 2.0)
             val x = (cx + radius * cos(angle)).toFloat()
             val y = (cy + radius * sin(angle)).toFloat()
             vx[i] = x
@@ -279,13 +276,13 @@ class HexagonOverlayView(
         val formattedPercent = String.format(Locale.US, "%05.2f%%", currentDisplay)
         canvas.drawText(formattedPercent, cx, cy + (4f * density), textPaint)
 
-        // 6. Charging Mode Title (Cleaned up, no double bolts)
-        canvas.drawText("⚡ $chargeTitle", cx, cy + (26f * density), labelPaint)
+        // 6. Charging Mode Title
+        canvas.drawText("\u26A1 $chargeTitle", cx, cy + (26f * density), labelPaint)
 
-        // 7. Live Hardware Telemetry: Watts & Temperature
+        // 7. Live Telemetry: Watts & Temperature (Using safe unicode escapes)
         val wattText = if (liveWatts > 0f) String.format(Locale.US, "%.1fW", liveWatts) else "--W"
-        val tempText = if (liveTempC > 0f) String.format(Locale.US, "%.1f°C", liveTempC) else "--°C"
-        canvas.drawText("$wattText  •  $tempText", cx, cy + (44f * density), telemetryPaint)
+        val tempText = if (liveTempC > 0f) String.format(Locale.US, "%.1f\u00B0C", liveTempC) else "--\u00B0C"
+        canvas.drawText("$wattText  \u2022  $tempText", cx, cy + (44f * density), telemetryPaint)
     }
 
     private fun drawCrazyElectricalWave(canvas: Canvas, x1: Float, y1: Float, x2: Float, y2: Float) {
@@ -295,7 +292,6 @@ class HexagonOverlayView(
         val ny = dx
         val len = sqrt(nx * nx + ny * ny)
 
-        // Primary erratic strike
         wavePath1.reset()
         wavePath1.moveTo(x1, y1)
         val segs1 = 6
@@ -311,7 +307,6 @@ class HexagonOverlayView(
         canvas.drawPath(wavePath1, redArcPaint)
         canvas.drawPath(wavePath1, whiteCorePaint)
 
-        // Secondary wild sparks
         wavePath2.reset()
         wavePath2.moveTo(x1, y1)
         val segs2 = 4
