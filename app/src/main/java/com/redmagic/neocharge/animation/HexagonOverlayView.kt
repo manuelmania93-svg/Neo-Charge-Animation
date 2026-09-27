@@ -9,9 +9,8 @@ import android.os.BatteryManager
 import android.view.View
 import android.view.animation.LinearInterpolator
 import java.util.Locale
-import kotlin.math.cos
-import kotlin.math.min
-import kotlin.math.sin
+import kotlin.math.*
+import kotlin.random.Random
 
 class HexagonOverlayView(context: Context, private val chargeLabel: String) : View(context) {
 
@@ -19,51 +18,102 @@ class HexagonOverlayView(context: Context, private val chargeLabel: String) : Vi
     private var displayPercentage: Float = currentLevel
     private val density = resources.displayMetrics.density
 
-    // Subtle dark gradient vignette around the hexagon only
+    // Reusable paths for performance
+    private val hexPath = Path()
+    private val lightningPath = Path()
+
+    // --- Paint Styles ---
     private val radialDimPaint = Paint().apply { isAntiAlias = true }
 
+    // Outer dark hexagon rim
+    private val hexRimPaint = Paint().apply {
+        color = Color.parseColor("#1A1116")
+        style = Paint.Style.STROKE
+        strokeWidth = 9f * density
+        isAntiAlias = true
+        pathEffect = CornerPathEffect(14f * density)
+    }
+
+    // Inner bright neon border
+    private val hexBorderPaint = Paint().apply {
+        color = Color.parseColor("#33FF1E38")
+        style = Paint.Style.STROKE
+        strokeWidth = 2.5f * density
+        isAntiAlias = true
+        pathEffect = CornerPathEffect(12f * density)
+    }
+
+    // Cyan Electric Arc (Left Side)
+    private val cyanGlowPaint = Paint().apply {
+        color = Color.parseColor("#00E5FF")
+        style = Paint.Style.STROKE
+        strokeWidth = 2.5f * density
+        isAntiAlias = true
+        setShadowLayer(10f * density, 0f, 0f, Color.parseColor("#00B0FF"))
+    }
+
+    // Magenta/Red Electric Arc (Right Side)
+    private val magentaGlowPaint = Paint().apply {
+        color = Color.parseColor("#FF0055")
+        style = Paint.Style.STROKE
+        strokeWidth = 2.5f * density
+        isAntiAlias = true
+        setShadowLayer(10f * density, 0f, 0f, Color.parseColor("#FF1744"))
+    }
+
+    // Lightning White Core
+    private val lightningCorePaint = Paint().apply {
+        color = Color.WHITE
+        style = Paint.Style.STROKE
+        strokeWidth = 1.2f * density
+        isAntiAlias = true
+    }
+
+    // Vertical Laser Guide Line (to fingerprint sensor)
+    private val laserPaint = Paint().apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1.2f * density
+        isAntiAlias = true
+    }
+
+    private val laserGlowPaint = Paint().apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 3.5f * density
+        isAntiAlias = true
+        color = Color.parseColor("#4400E5FF")
+    }
+
+    // Big 4-digit percentage text
     private val textPaint = Paint().apply {
         color = Color.WHITE
-        textSize = 36f * density
+        textSize = 38f * density
         isFakeBoldText = true
         textAlign = Paint.Align.CENTER
         isAntiAlias = true
-        setShadowLayer(18f * density, 0f, 0f, Color.parseColor("#FF0033")) // Red cyber glow
+        setShadowLayer(16f * density, 0f, 0f, Color.parseColor("#AA000000"))
     }
 
+    // MAX CHARGE text
     private val labelPaint = Paint().apply {
-        color = Color.parseColor("#FFCC00") // Electric Gold MAX CHARGE
+        color = Color.parseColor("#FFCC00") // Electric Gold
         textSize = 13f * density
         isFakeBoldText = true
         textAlign = Paint.Align.CENTER
         isAntiAlias = true
-        letterSpacing = 0.18f
-    }
-
-    private val hexBorderPaint = Paint().apply {
-        color = Color.parseColor("#FF1E38") // Cyber Red
-        style = Paint.Style.STROKE
-        strokeWidth = 3.5f * density
-        isAntiAlias = true
-        pathEffect = CornerPathEffect(12f * density)
-        setShadowLayer(15f * density, 0f, 0f, Color.parseColor("#FF0033"))
-    }
-
-    private val hexInnerGlowPaint = Paint().apply {
-        color = Color.parseColor("#33FF0033")
-        style = Paint.Style.FILL
-        isAntiAlias = true
+        letterSpacing = 0.2f
+        setShadowLayer(8f * density, 0f, 0f, Color.parseColor("#FF9100"))
     }
 
     init {
-        // Live 4-digit decimal ticker loop (XX.YY%)
-        val animator = ValueAnimator.ofFloat(currentLevel, currentLevel + 0.99f).apply {
+        // Continuous animation loop for lightning flicker & decimal ticker
+        val animator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 3500
             repeatCount = ValueAnimator.INFINITE
             interpolator = LinearInterpolator()
             addUpdateListener {
-                displayPercentage = it.animatedValue as Float
-                invalidate()
+                val fraction = it.animatedFraction
+                displayPercentage = currentLevel + (fraction * 0.99f)
+                invalidate() // Triggers real-time lightning frame update
             }
         }
         animator.start()
@@ -80,38 +130,105 @@ class HexagonOverlayView(context: Context, private val chargeLabel: String) : Vi
         super.onDraw(canvas)
 
         val cx = width / 2f
-        // Centered exactly in the middle of screen (above fingerprint reader, below clock)
-        val cy = height * 0.52f
+        val cy = height * 0.50f
         val radius = min(width, height) * 0.25f
 
-        // 1. Draw subtle radial shadow behind the hexagon only (keeps wallpaper visible)
+        // 1. Center subtle vignette so lock screen wallpaper stays visible
         radialDimPaint.shader = RadialGradient(
-            cx, cy, radius * 1.5f,
-            intArrayOf(Color.parseColor("#D9000000"), Color.TRANSPARENT),
-            floatArrayOf(0.4f, 1.0f),
+            cx, cy, radius * 1.6f,
+            intArrayOf(Color.parseColor("#CC08080C"), Color.TRANSPARENT),
+            floatArrayOf(0.45f, 1.0f),
             Shader.TileMode.CLAMP
         )
-        canvas.drawCircle(cx, cy, radius * 1.5f, radialDimPaint)
+        canvas.drawCircle(cx, cy, radius * 1.6f, radialDimPaint)
 
-        // 2. Build Hexagon Path
-        val path = Path()
+        // 2. Calculate the 6 vertices of the hexagon
+        val verticesX = FloatArray(6)
+        val verticesY = FloatArray(6)
+        hexPath.reset()
         for (i in 0 until 6) {
             val angle = (Math.PI / 3 * i) - (Math.PI / 2)
             val x = (cx + radius * cos(angle)).toFloat()
             val y = (cy + radius * sin(angle)).toFloat()
-            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            verticesX[i] = x
+            verticesY[i] = y
+            if (i == 0) hexPath.moveTo(x, y) else hexPath.lineTo(x, y)
         }
-        path.close()
+        hexPath.close()
 
-        // 3. Draw Hexagon Body & Neon Edge
-        canvas.drawPath(path, hexInnerGlowPaint)
-        canvas.drawPath(path, hexBorderPaint)
+        // 3. Draw Base Hexagon Frames
+        canvas.drawPath(hexPath, hexRimPaint)
+        canvas.drawPath(hexPath, hexBorderPaint)
 
-        // 4. Render 4 numbers (XX.YY%)
+        // 4. Draw Electric Lightning Arcs
+        // Left Edges (vertices 3->4, 4->5, 5->0) = Cyan Lightning
+        drawLightningEdge(canvas, verticesX[3], verticesY[3], verticesX[4], verticesY[4], cyanGlowPaint)
+        drawLightningEdge(canvas, verticesX[4], verticesY[4], verticesX[5], verticesY[5], cyanGlowPaint)
+        drawLightningEdge(canvas, verticesX[5], verticesY[5], verticesX[0], verticesY[0], cyanGlowPaint)
+
+        // Right Edges (vertices 0->1, 1->2, 2->3) = Magenta/Pink Lightning
+        drawLightningEdge(canvas, verticesX[0], verticesY[0], verticesX[1], verticesY[1], magentaGlowPaint)
+        drawLightningEdge(canvas, verticesX[1], verticesY[1], verticesX[2], verticesY[2], magentaGlowPaint)
+        drawLightningEdge(canvas, verticesX[2], verticesY[2], verticesX[3], verticesY[3], magentaGlowPaint)
+
+        // 5. Draw the Vertical Laser Guide Line (Bottom tip straight down to fingerprint sensor)
+        val bottomTipX = verticesX[3]
+        val bottomTipY = verticesY[3]
+        val fingerprintTargetY = height * 0.81f // Optical fingerprint location
+
+        laserPaint.shader = LinearGradient(
+            bottomTipX, bottomTipY, bottomTipX, fingerprintTargetY,
+            intArrayOf(Color.parseColor("#FF0055"), Color.parseColor("#00E5FF"), Color.TRANSPARENT),
+            floatArrayOf(0.0f, 0.7f, 1.0f),
+            Shader.TileMode.CLAMP
+        )
+        canvas.drawLine(bottomTipX, bottomTipY + (4f * density), bottomTipX, fingerprintTargetY, laserGlowPaint)
+        canvas.drawLine(bottomTipX, bottomTipY + (4f * density), bottomTipX, fingerprintTargetY, laserPaint)
+
+        // 6. Draw 4 Numbers (XX.YY%)
         val formattedPercent = String.format(Locale.US, "%05.2f%%", displayPercentage)
-        canvas.drawText(formattedPercent, cx, cy + (8f * density), textPaint)
+        canvas.drawText(formattedPercent, cx, cy + (6f * density), textPaint)
 
-        // 5. Render MAX CHARGE
+        // 7. Draw MAX CHARGE
         canvas.drawText(chargeLabel, cx, cy + (34f * density), labelPaint)
+    }
+
+    // Procedural chaotic lightning algorithm
+    private fun drawLightningEdge(
+        canvas: Canvas,
+        x1: Float, y1: Float,
+        x2: Float, y2: Float,
+        glowPaint: Paint
+    ) {
+        lightningPath.reset()
+        lightningPath.moveTo(x1, y1)
+
+        val segments = 4
+        val dx = (x2 - x1) / segments
+        val dy = (y2 - y1) / segments
+
+        // Perpendicular vector for chaotic jitter
+        val nx = -dy
+        val ny = dx
+        val len = sqrt(nx * nx + ny * ny)
+
+        for (s in 1 until segments) {
+            val progressX = x1 + dx * s
+            val progressY = y1 + dy * s
+
+            // Random jagged displacement (-12dp to +12dp)
+            val jitter = (Random.nextFloat() - 0.5f) * (20f * density)
+            val offsetX = progressX + (nx / len) * jitter
+            val offsetY = progressY + (ny / len) * jitter
+
+            lightningPath.lineTo(offsetX, offsetY)
+        }
+
+        lightningPath.lineTo(x2, y2)
+
+        // Pass 1: Colored neon glow arc
+        canvas.drawPath(lightningPath, glowPaint)
+        // Pass 2: Intense white electrical core
+        canvas.drawPath(lightningPath, lightningCorePaint)
     }
 }
