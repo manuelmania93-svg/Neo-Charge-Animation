@@ -7,14 +7,12 @@ class BatteryPhysicsIntegrator {
     private var currentBasePercent: Int = -1
     private var decimalAccumulator: Float = 0.05f
 
-    // 1. Auto-calibration state
     private var lastTickTimestampMs: Long = 0L
-    private var calibratedDurationSec: Float = 35.0f // Fallback seed: 35s per 1%
+    private var calibratedDurationSec: Float = 35.0f
 
-    // 2. Power Noise Damping (Low-Pass Filter)
     private var smoothedWatts: Float = 0f
 
-    // 3. Micro-Glide state
+    // Micro-Glide Engine (400ms Buttery Ease-Out)
     private var isGliding: Boolean = false
     private var glideStartPercent: Float = 0f
     private var glideTargetPercent: Float = 0f
@@ -23,7 +21,7 @@ class BatteryPhysicsIntegrator {
     fun update(raw: BatteryHardwareProvider.RawTelemetry, deltaTimeSec: Float): TelemetryState {
         val now = System.currentTimeMillis()
 
-        // 100% Saturation Ceiling
+        // 100% Full Saturation Lock
         if (raw.percent >= 100) {
             return TelemetryState(
                 basePercent = 100,
@@ -35,21 +33,20 @@ class BatteryPhysicsIntegrator {
             )
         }
 
-        // Low-pass filter for power fluctuations (80% historical, 20% instant)
-        smoothedWatts = if (smoothedWatts <= 0f) raw.watts else (smoothedWatts * 0.80f + raw.watts * 0.20f)
+        // Noise Damping on incoming power
+        smoothedWatts = if (smoothedWatts <= 0f) raw.watts else (smoothedWatts * 0.82f + raw.watts * 0.18f)
 
-        // Integer flip detected (e.g. 72% -> 73%)
+        // Integer percentage step (e.g. 89% -> 90%)
         if (currentBasePercent != -1 && currentBasePercent != raw.percent) {
             if (lastTickTimestampMs > 0L) {
                 val elapsedSec = (now - lastTickTimestampMs) / 1000f
                 if (elapsedSec in 10f..180f) {
-                    // Auto-Calibrate: exactly how long 1% takes on your charger
                     calibratedDurationSec = elapsedSec
                 }
             }
             lastTickTimestampMs = now
 
-            // Trigger Micro-Glide over 250ms to bridge the gap seamlessly
+            // Seamless 400ms Micro-Glide ease-out
             glideStartPercent = currentBasePercent.toFloat() + decimalAccumulator
             glideTargetPercent = raw.percent.toFloat() + 0.01f
             glideProgress = 0.0f
@@ -58,13 +55,11 @@ class BatteryPhysicsIntegrator {
             currentBasePercent = raw.percent
             decimalAccumulator = 0.01f
         } else if (currentBasePercent == -1) {
-            // Cold-Start: Seed pace from live wattage & 6000mAh battery capacity
             currentBasePercent = raw.percent
             lastTickTimestampMs = now
             decimalAccumulator = 0.05f
 
-            val initialWatts = max(smoothedWatts, 15f)
-            // Physics: 6000mAh at ~4V is 24Wh. Rate = Watts / 24Wh
+            val initialWatts = max(smoothedWatts, 10f)
             val percentPerHour = (initialWatts / 24f) * 100f
             val percentPerSec = percentPerHour / 3600f
             calibratedDurationSec = (1.0f / max(percentPerSec, 0.01f)).coerceIn(15f, 90f)
@@ -73,23 +68,18 @@ class BatteryPhysicsIntegrator {
         var finalDisplayPercentage: Float
 
         if (isGliding) {
-            // Micro-glide ease-out (250ms duration)
-            glideProgress += deltaTimeSec / 0.25f
+            glideProgress += deltaTimeSec / 0.40f
             if (glideProgress >= 1.0f) {
                 glideProgress = 1.0f
                 isGliding = false
                 finalDisplayPercentage = currentBasePercent.toFloat() + decimalAccumulator
             } else {
-                // Cubic ease-out curve
-                val t = 1.0f - (1.0f - glideProgress) * (1.0f - glideProgress)
+                val t = 1.0f - (1.0f - glideProgress) * (1.0f - glideProgress) * (1.0f - glideProgress)
                 finalDisplayPercentage = glideStartPercent + (glideTargetPercent - glideStartPercent) * t
             }
         } else {
-            // Adaptive speed advancement (rate = 1.0 / calibratedDuration)
             val currentRatePerSec = (1.0f / max(calibratedDurationSec, 10f))
-
-            // Thermal / Wattage throttling modifier
-            val wattageRatio = if (smoothedWatts > 0f) (smoothedWatts / 18f).coerceIn(0.6f, 1.8f) else 1.0f
+            val wattageRatio = if (smoothedWatts > 0f) (smoothedWatts / 16f).coerceIn(0.5f, 1.8f) else 1.0f
             val effectiveRate = currentRatePerSec * wattageRatio
 
             if (decimalAccumulator < 0.985f) {

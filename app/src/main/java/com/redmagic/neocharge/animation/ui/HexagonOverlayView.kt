@@ -17,21 +17,20 @@ class HexagonOverlayView(
     private var telemetryState = TelemetryState()
 
     private val hexPath = Path()
-    private val innerHexPath = Path()
     private val wavePath1 = Path()
     private val wavePath2 = Path()
     private val radialDimPaint = Paint().apply { isAntiAlias = true }
 
-    // Solid Cyber-Hexagon Structural Rim (Sharp Definition)
+    private var pulseAngle = 0.0
+
     private val hexRimPaint = Paint().apply {
-        color = Color.parseColor("#330508") // Deep cyber-titanium rim
+        color = Color.parseColor("#330508")
         style = Paint.Style.STROKE
         strokeWidth = 7f * density
         isAntiAlias = true
         pathEffect = CornerPathEffect(14f * density)
     }
 
-    // High-Contrast Neon Red Cyber Frame
     private val hexBorderPaint = Paint().apply {
         color = Color.parseColor("#FF0033")
         style = Paint.Style.STROKE
@@ -41,7 +40,6 @@ class HexagonOverlayView(
         setShadowLayer(14f * density, 0f, 0f, Color.parseColor("#FF0033"))
     }
 
-    // Outer Electric Red Plasma (Controlled Jitter)
     private val redGlowPaint = Paint().apply {
         color = Color.parseColor("#FF1744")
         style = Paint.Style.STROKE
@@ -50,7 +48,6 @@ class HexagonOverlayView(
         setShadowLayer(12f * density, 0f, 0f, Color.parseColor("#FF0033"))
     }
 
-    // Secondary Chaotic Crackle
     private val redArcPaint = Paint().apply {
         color = Color.parseColor("#FF5252")
         style = Paint.Style.STROKE
@@ -58,7 +55,6 @@ class HexagonOverlayView(
         isAntiAlias = true
     }
 
-    // Hot-White Plasma Core
     private val whiteCorePaint = Paint().apply {
         color = Color.parseColor("#FFF5F5")
         style = Paint.Style.STROKE
@@ -66,7 +62,6 @@ class HexagonOverlayView(
         isAntiAlias = true
     }
 
-    // Fingerprint Laser Guide (Tapered Soft Beam)
     private val laserPaint = Paint().apply {
         style = Paint.Style.STROKE
         strokeWidth = 1.4f * density
@@ -77,10 +72,8 @@ class HexagonOverlayView(
         style = Paint.Style.STROKE
         strokeWidth = 4.0f * density
         isAntiAlias = true
-        color = Color.parseColor("#44FF0033")
     }
 
-    // 4-Digit Live Percentage Text
     private val textPaint = Paint().apply {
         color = Color.WHITE
         textSize = 38f * density
@@ -90,7 +83,6 @@ class HexagonOverlayView(
         setShadowLayer(20f * density, 0f, 0f, Color.parseColor("#FF0033"))
     }
 
-    // MAX CHARGE Badge
     private val labelPaint = Paint().apply {
         color = Color.parseColor("#FF1744")
         textSize = 12f * density
@@ -101,7 +93,6 @@ class HexagonOverlayView(
         setShadowLayer(8f * density, 0f, 0f, Color.parseColor("#FF0033"))
     }
 
-    // Telemetry: Watts & Temp
     private val telemetryPaint = Paint().apply {
         color = Color.parseColor("#FFAAA0")
         textSize = 11f * density
@@ -117,6 +108,7 @@ class HexagonOverlayView(
 
     fun submitTelemetry(state: TelemetryState) {
         this.telemetryState = state
+        pulseAngle += 0.08
         invalidate()
     }
 
@@ -127,7 +119,6 @@ class HexagonOverlayView(
         val cy = height * 0.50f
         val radius = min(width, height) * 0.25f
 
-        // 1. Dark red ambient aura
         radialDimPaint.shader = RadialGradient(
             cx, cy, radius * 1.65f,
             intArrayOf(Color.parseColor("#E6120205"), Color.parseColor("#4D0A0103"), Color.TRANSPARENT),
@@ -136,7 +127,6 @@ class HexagonOverlayView(
         )
         canvas.drawCircle(cx, cy, radius * 1.65f, radialDimPaint)
 
-        // 2. Compute 6 hexagon corners
         val vx = FloatArray(6)
         val vy = FloatArray(6)
         hexPath.reset()
@@ -150,41 +140,41 @@ class HexagonOverlayView(
         }
         hexPath.close()
 
-        // 3. Draw Clean Structural Cyber-Hexagon
         canvas.drawPath(hexPath, hexRimPaint)
         canvas.drawPath(hexPath, hexBorderPaint)
 
-        // 4. Draw Electric Lightning Arcs (Tightly wrapping the perimeter)
         val isFull = telemetryState.basePercent >= 100
-        val jitterMagnitude = if (isFull) 3f * density else 8.5f * density
+        val jitterMagnitude = if (isFull) 2.5f * density else 8.5f * density
 
         for (i in 0 until 6) {
             val next = (i + 1) % 6
             drawTightElectricalWave(canvas, vx[i], vy[i], vx[next], vy[next], jitterMagnitude)
         }
 
-        // 5. Vertical Red Laser Guide (Soft downward gradient to fingerprint sensor)
         val bottomTipX = vx[3]
         val bottomTipY = vy[3]
         val fingerprintTargetY = height * 0.81f
 
+        val pulseAlpha = (0.7f + 0.3f * sin(pulseAngle).toFloat()).coerceIn(0.4f, 1.0f)
+        val laserColor = Color.argb((255 * pulseAlpha).toInt(), 255, 0, 51)
+        val glowColor = Color.argb((90 * pulseAlpha).toInt(), 255, 0, 51)
+
         laserPaint.shader = LinearGradient(
             bottomTipX, bottomTipY, bottomTipX, fingerprintTargetY,
-            intArrayOf(Color.parseColor("#FF0033"), Color.parseColor("#80FF1744"), Color.TRANSPARENT),
-            floatArrayOf(0.0f, 0.60f, 1.0f),
+            intArrayOf(laserColor, Color.parseColor("#50FF1744"), Color.TRANSPARENT),
+            floatArrayOf(0.0f, 0.65f, 1.0f),
             Shader.TileMode.CLAMP
         )
+        laserGlowPaint.color = glowColor
+
         canvas.drawLine(bottomTipX, bottomTipY + (3f * density), bottomTipX, fingerprintTargetY, laserGlowPaint)
         canvas.drawLine(bottomTipX, bottomTipY + (3f * density), bottomTipX, fingerprintTargetY, laserPaint)
 
-        // 6. Synchronized 4-Digit Display Percentage
         val formattedPercent = String.format(Locale.US, "%05.2f%%", telemetryState.displayPercentage)
         canvas.drawText(formattedPercent, cx, cy + (4f * density), textPaint)
 
-        // 7. Title Badge
         canvas.drawText("\u26A1 ${telemetryState.chargeGrade}", cx, cy + (26f * density), labelPaint)
 
-        // 8. Live Watts & Temperature Telemetry
         val wattText = if (telemetryState.watts > 0f) String.format(Locale.US, "%.1fW", telemetryState.watts) else "--W"
         val tempText = if (telemetryState.tempCelsius > 0f) String.format(Locale.US, "%.1f\u00B0C", telemetryState.tempCelsius) else "--\u00B0C"
         canvas.drawText("$wattText  \u2022  $tempText", cx, cy + (44f * density), telemetryPaint)
@@ -197,7 +187,6 @@ class HexagonOverlayView(
         val ny = dx
         val len = sqrt(nx * nx + ny * ny)
 
-        // Wave 1: Primary electrical arc hugging the edge
         wavePath1.reset()
         wavePath1.moveTo(x1, y1)
         val segs1 = 5
@@ -213,7 +202,6 @@ class HexagonOverlayView(
         canvas.drawPath(wavePath1, redArcPaint)
         canvas.drawPath(wavePath1, whiteCorePaint)
 
-        // Wave 2: Micro crackle spark
         wavePath2.reset()
         wavePath2.moveTo(x1, y1)
         val segs2 = 3
