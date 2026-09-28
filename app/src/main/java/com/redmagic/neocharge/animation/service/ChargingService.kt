@@ -41,11 +41,9 @@ class ChargingService : Service() {
             val deltaSec = (now - lastFrameTime) / 1000f
             lastFrameTime = now
 
-            // Tolerant disconnect check for weak USB/car chargers
             if (!isPreviewSession) {
                 if (!hardwareProvider.isChargerPhysicallyConnected()) {
                     disconnectedCounter++
-                    // Needs 6 consecutive fails (~3 seconds) to ensure it wasn't a weak USB dip
                     if (disconnectedCounter >= 6) {
                         stopChargingSession()
                         return
@@ -66,14 +64,13 @@ class ChargingService : Service() {
     override fun onCreate() {
         super.onCreate()
         hardwareProvider = BatteryHardwareProvider(this)
-        physicsIntegrator = BatteryPhysicsIntegrator()
+        physicsIntegrator = BatteryPhysicsIntegrator(this) // Context injected for memory storage
         overlayController = OverlayController(this)
 
         val powerManager = getSystemService(POWER_SERVICE) as PowerManager
-        // Guarantees screen stays bright even if charger is only 5W
         wakeLock = powerManager.newWakeLock(
             PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
-            "neocharge:slow_charging_stay_awake"
+            "neocharge:charging_stay_awake"
         )
 
         val filter = IntentFilter().apply {
@@ -155,7 +152,7 @@ class ChargingService : Service() {
 
         return NotificationCompat.Builder(this, channelId)
             .setContentTitle("NeoCharge Active")
-            .setContentText("Monitoring charging telemetry")
+            .setContentText("Hardware Telemetry Engine Armed")
             .setSmallIcon(android.R.drawable.ic_lock_idle_charging)
             .build()
     }
