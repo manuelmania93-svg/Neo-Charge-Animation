@@ -20,11 +20,17 @@ class BatteryHardwareProvider(private val context: Context) {
         return ((level.toFloat() / scale.toFloat()) * 100f).toInt()
     }
 
+    // Bulletproof: detects ANY power source (AC, USB, Wireless, Car, PC)
     fun isChargerPhysicallyConnected(): Boolean {
         val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val plugged = intent?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0
         val status = intent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
-        return plugged != 0 || status == BatteryManager.BATTERY_STATUS_CHARGING
+        
+        // As long as ANY pin is receiving power, consider it connected
+        return plugged == BatteryManager.BATTERY_PLUGGED_AC ||
+               plugged == BatteryManager.BATTERY_PLUGGED_USB ||
+               plugged == BatteryManager.BATTERY_PLUGGED_WIRELESS ||
+               status == BatteryManager.BATTERY_STATUS_CHARGING
     }
 
     fun readHardwareTelemetry(batteryIntent: Intent?): RawTelemetry {
@@ -42,17 +48,19 @@ class BatteryHardwareProvider(private val context: Context) {
             watts = volts * amps
         }
 
+        // Clean titles for all charger types
         val grade = when {
-            watts >= 28f || plugged == BatteryManager.BATTERY_PLUGGED_AC -> "MAX CHARGE"
+            watts >= 25f || (plugged == BatteryManager.BATTERY_PLUGGED_AC && watts >= 15f) -> "MAX CHARGE"
             plugged == BatteryManager.BATTERY_PLUGGED_WIRELESS -> "WIRELESS TURBO"
-            else -> "FAST CHARGE"
+            watts in 8f..25f -> "FAST CHARGE"
+            else -> "USB CHARGE"
         }
 
         return RawTelemetry(
             percent = getLiveStatusbarPercent(),
             watts = watts,
             tempCelsius = tempRaw / 10.0f,
-            isPlugged = plugged != 0,
+            isPlugged = isChargerPhysicallyConnected(),
             grade = grade
         )
     }

@@ -18,12 +18,12 @@ class ChargingService : Service() {
     private val tickerHandler = Handler(Looper.getMainLooper())
     private var lastFrameTime = System.currentTimeMillis()
     private var isPreviewSession = false
+    private var disconnectedCounter = 0
 
     private val powerReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 Intent.ACTION_POWER_CONNECTED -> {
-                    wakeUpScreen()
                     startChargingSession(isPreview = false)
                 }
                 Intent.ACTION_POWER_DISCONNECTED -> {
@@ -41,9 +41,18 @@ class ChargingService : Service() {
             val deltaSec = (now - lastFrameTime) / 1000f
             lastFrameTime = now
 
-            if (!isPreviewSession && !hardwareProvider.isChargerPhysicallyConnected()) {
-                stopChargingSession()
-                return
+            // Tolerant disconnect check for weak USB/car chargers
+            if (!isPreviewSession) {
+                if (!hardwareProvider.isChargerPhysicallyConnected()) {
+                    disconnectedCounter++
+                    // Needs 6 consecutive fails (~3 seconds) to ensure it wasn't a weak USB dip
+                    if (disconnectedCounter >= 6) {
+                        stopChargingSession()
+                        return
+                    }
+                } else {
+                    disconnectedCounter = 0
+                }
             }
 
             val rawData = hardwareProvider.readHardwareTelemetry(null)
@@ -61,9 +70,10 @@ class ChargingService : Service() {
         overlayController = OverlayController(this)
 
         val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+        // Guarantees screen stays bright even if charger is only 5W
         wakeLock = powerManager.newWakeLock(
-            PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
-            "neocharge:wake_guard"
+            PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
+            "neocharge:slow_charging_stay_awake"
         )
 
         val filter = IntentFilter().apply {
@@ -83,28 +93,20 @@ class ChargingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == "PREVIEW_ANIMATION") {
-            wakeUpScreen()
             startChargingSession(isPreview = true)
         }
         return START_STICKY
-    }
-
-    private fun wakeUpScreen() {
-        try {
-            if (wakeLock?.isHeld == false) {
-                wakeLock?.acquire(4000)
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
     }
 
     private fun startChargingSession(isPreview: Boolean) {
         if (overlayController.isShowing()) return
 
         this.isPreviewSession = isPreview
+        this.disconnectedCounter = 0
         physicsIntegrator.reset()
         lastFrameTime = System.currentTimeMillis()
+
+        acquireWakeLock()
 
         overlayController.show(onDismissed = {
             stopChargingSession()
@@ -121,7 +123,29 @@ class ChargingService : Service() {
         tickerHandler.removeCallbacks(telemetryLoop)
         overlayController.dismiss()
         physicsIntegrator.reset()
+        releaseWakeLock()
         isPreviewSession = false
+        disconnectedCounter = 0
+    }
+
+    private fun acquireWakeLock() {
+        try {
+            if (wakeLock?.isHeld == false) {
+                wakeLock?.acquire()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun createNotification(): Notification {
@@ -131,7 +155,7 @@ class ChargingService : Service() {
 
         return NotificationCompat.Builder(this, channelId)
             .setContentTitle("NeoCharge Active")
-            .setContentText("Hardware Telemetry Engine Armed")
+            .setContentText("Monitoring charging telemetry")
             .setSmallIcon(android.R.drawable.ic_lock_idle_charging)
             .build()
     }
@@ -141,7 +165,7 @@ class ChargingService : Service() {
     override fun onDestroy() {
         stopChargingSession()
         unregisterReceiver(powerReceiver)
-        wakeLock?.let { if (it.isHeld) it.release() }
+        releaseWakeLock()
         super.onDestroy()
     }
 }
