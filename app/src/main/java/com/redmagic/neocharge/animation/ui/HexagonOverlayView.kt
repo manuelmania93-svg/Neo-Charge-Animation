@@ -2,7 +2,9 @@ package com.redmagic.neocharge.animation.ui
 
 import android.content.Context
 import android.graphics.*
+import android.view.MotionEvent
 import android.view.View
+import com.redmagic.neocharge.animation.core.BatteryHardwareProvider
 import com.redmagic.neocharge.animation.core.TelemetryState
 import java.util.Locale
 import kotlin.math.*
@@ -14,7 +16,7 @@ class HexagonOverlayView(
 ) : View(context) {
 
     private val density = resources.displayMetrics.density
-    private var telemetryState = TelemetryState()
+    private var telemetryState: TelemetryState
 
     private val hexPath = Path()
     private val wavePath1 = Path()
@@ -103,7 +105,29 @@ class HexagonOverlayView(
     }
 
     init {
-        setOnClickListener { onDismissRequest.invoke() }
+        // Initialize immediately with the phone's actual battery level
+        val initialPercent = BatteryHardwareProvider(context).getLiveStatusbarPercent()
+        telemetryState = TelemetryState(
+            basePercent = initialPercent,
+            displayPercentage = initialPercent.toFloat()
+        )
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.action == MotionEvent.ACTION_UP) {
+            val cx = width / 2f
+            val cy = height * 0.50f
+            val dx = event.x - cx
+            val dy = event.y - cy
+            val dist = sqrt(dx * dx + dy * dy)
+            val radius = min(width, height) * 0.35f
+
+            if (dist <= radius) {
+                onDismissRequest.invoke()
+                return true
+            }
+        }
+        return super.onTouchEvent(event)
     }
 
     fun submitTelemetry(state: TelemetryState) {

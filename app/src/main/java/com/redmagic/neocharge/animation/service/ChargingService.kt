@@ -18,13 +18,15 @@ class ChargingService : Service() {
     private val tickerHandler = Handler(Looper.getMainLooper())
     private var lastFrameTime = System.currentTimeMillis()
     private var isPreviewSession = false
-    private var disconnectedCounter = 0
 
     private val powerReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 Intent.ACTION_POWER_CONNECTED -> {
-                    startChargingSession(isPreview = false)
+                    // Double check with hardware before launching
+                    if (hardwareProvider.isChargerPhysicallyConnected()) {
+                        startChargingSession(isPreview = false)
+                    }
                 }
                 Intent.ACTION_POWER_DISCONNECTED -> {
                     stopChargingSession()
@@ -37,34 +39,28 @@ class ChargingService : Service() {
         override fun run() {
             if (!overlayController.isShowing()) return
 
+            // STRICT UNPLUG GUARD: If cable is pulled, kill window instantly on frame 1
+            if (!isPreviewSession && !hardwareProvider.isChargerPhysicallyConnected()) {
+                stopChargingSession()
+                return
+            }
+
             val now = System.currentTimeMillis()
             val deltaSec = (now - lastFrameTime) / 1000f
             lastFrameTime = now
-
-            if (!isPreviewSession) {
-                if (!hardwareProvider.isChargerPhysicallyConnected()) {
-                    disconnectedCounter++
-                    if (disconnectedCounter >= 6) {
-                        stopChargingSession()
-                        return
-                    }
-                } else {
-                    disconnectedCounter = 0
-                }
-            }
 
             val rawData = hardwareProvider.readHardwareTelemetry(null)
             val computedState = physicsIntegrator.update(rawData, deltaSec.coerceIn(0.016f, 0.1f))
 
             overlayController.updateTelemetry(computedState)
-            tickerHandler.postDelayed(this, 16L)
+            tickerHandler.postDelayed(this, 16L) // ~60 FPS
         }
     }
 
     override fun onCreate() {
         super.onCreate()
         hardwareProvider = BatteryHardwareProvider(this)
-        physicsIntegrator = BatteryPhysicsIntegrator(this) // Context injected for memory storage
+        physicsIntegrator = BatteryPhysicsIntegrator(this)
         overlayController = OverlayController(this)
 
         val powerManager = getSystemService(POWER_SERVICE) as PowerManager
@@ -96,10 +92,14 @@ class ChargingService : Service() {
     }
 
     private fun startChargingSession(isPreview: Boolean) {
+        // Refuse to open if not plugged in (unless user specifically pressed test preview)
+        if (!isPreview && !hardwareProvider.isChargerPhysicallyConnected()) {
+            return
+        }
+
         if (overlayController.isShowing()) return
 
         this.isPreviewSession = isPreview
-        this.disconnectedCounter = 0
         physicsIntegrator.reset()
         lastFrameTime = System.currentTimeMillis()
 
@@ -112,7 +112,7 @@ class ChargingService : Service() {
         tickerHandler.post(telemetryLoop)
 
         if (isPreview) {
-            tickerHandler.postDelayed({ stopChargingSession() }, 6000L)
+            tickerHandler.postDelayed({ stopChargingSession() }, 5000L)
         }
     }
 
@@ -122,7 +122,6 @@ class ChargingService : Service() {
         physicsIntegrator.reset()
         releaseWakeLock()
         isPreviewSession = false
-        disconnectedCounter = 0
     }
 
     private fun acquireWakeLock() {

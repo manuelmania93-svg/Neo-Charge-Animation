@@ -15,18 +15,16 @@ class BatteryHardwareProvider(private val context: Context) {
         if (hardwareCapacity in 1..100) return hardwareCapacity
 
         val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: 88
+        val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: 50
         val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
         return ((level.toFloat() / scale.toFloat()) * 100f).toInt()
     }
 
-    // Bulletproof: detects ANY power source (AC, USB, Wireless, Car, PC)
     fun isChargerPhysicallyConnected(): Boolean {
         val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val plugged = intent?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0
         val status = intent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
         
-        // As long as ANY pin is receiving power, consider it connected
         return plugged == BatteryManager.BATTERY_PLUGGED_AC ||
                plugged == BatteryManager.BATTERY_PLUGGED_USB ||
                plugged == BatteryManager.BATTERY_PLUGGED_WIRELESS ||
@@ -48,8 +46,10 @@ class BatteryHardwareProvider(private val context: Context) {
             watts = volts * amps
         }
 
-        // Clean titles for all charger types
+        val isConnected = isChargerPhysicallyConnected()
+
         val grade = when {
+            !isConnected -> "DISCONNECTED"
             watts >= 25f || (plugged == BatteryManager.BATTERY_PLUGGED_AC && watts >= 15f) -> "MAX CHARGE"
             plugged == BatteryManager.BATTERY_PLUGGED_WIRELESS -> "WIRELESS TURBO"
             watts in 8f..25f -> "FAST CHARGE"
@@ -60,7 +60,7 @@ class BatteryHardwareProvider(private val context: Context) {
             percent = getLiveStatusbarPercent(),
             watts = watts,
             tempCelsius = tempRaw / 10.0f,
-            isPlugged = isChargerPhysicallyConnected(),
+            isPlugged = isConnected,
             grade = grade
         )
     }
