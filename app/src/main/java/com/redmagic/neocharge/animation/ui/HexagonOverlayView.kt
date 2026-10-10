@@ -114,20 +114,30 @@ class HexagonOverlayView(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (event.action == MotionEvent.ACTION_UP) {
-            val cx = width / 2f
-            val cy = height * 0.50f
-            val dx = event.x - cx
-            val dy = event.y - cy
-            val dist = sqrt(dx * dx + dy * dy)
-            val radius = min(width, height) * 0.35f
-
-            if (dist <= radius) {
-                onDismissRequest.invoke()
-                return true
+        return when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                isPressed = true
+                true
             }
+            MotionEvent.ACTION_UP -> {
+                val shouldClick = isPressed
+                isPressed = false
+                if (shouldClick) performClick()
+                true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                isPressed = false
+                true
+            }
+            MotionEvent.ACTION_MOVE -> true
+            else -> super.onTouchEvent(event)
         }
-        return super.onTouchEvent(event)
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        onDismissRequest.invoke()
+        return true
     }
 
     fun submitTelemetry(state: TelemetryState) {
