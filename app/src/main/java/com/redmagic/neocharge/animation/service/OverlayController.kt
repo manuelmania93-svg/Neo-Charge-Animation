@@ -3,6 +3,8 @@ package com.redmagic.neocharge.animation.service
 import android.content.Context
 import android.graphics.PixelFormat
 import android.os.*
+import android.provider.Settings
+import android.util.Log
 import android.view.*
 import com.redmagic.neocharge.animation.core.TelemetryState
 import com.redmagic.neocharge.animation.ui.HexagonOverlayView
@@ -16,10 +18,9 @@ class OverlayController(private val context: Context) {
 
     fun isShowing(): Boolean = isAttached
 
-    fun show(onDismissed: () -> Unit) {
-        if (isAttached || overlayView != null) return
-
-        triggerHapticPulse()
+    fun show(onDismissed: () -> Unit): Boolean {
+        if (isAttached) return true
+        if (!Settings.canDrawOverlays(context)) return false
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -45,10 +46,13 @@ class OverlayController(private val context: Context) {
         try {
             windowManager.addView(view, params)
             isAttached = true
+            triggerHapticPulse()
+            return true
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.w("NeoChargeOverlay", "Unable to attach overlay", e)
             isAttached = false
             overlayView = null
+            return false
         }
     }
 
