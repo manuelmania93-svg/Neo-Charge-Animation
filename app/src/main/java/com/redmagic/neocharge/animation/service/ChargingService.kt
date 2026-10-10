@@ -17,7 +17,8 @@ class ChargingService : Service() {
 
     private val tickerHandler = Handler(Looper.getMainLooper())
     private var lastFrameTime = System.currentTimeMillis()
-    private var isPreviewSession = false
+    private lateinit var session: ChargingSession
+    private val prefs by lazy { getSharedPreferences("neocharge_prefs", MODE_PRIVATE) }
 
     private val powerReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -37,10 +38,14 @@ class ChargingService : Service() {
 
     private val telemetryLoop = object : Runnable {
         override fun run() {
-            if (!overlayController.isShowing()) return
+            if (!session.isActive) return
+            if (!overlayController.isShowing()) {
+                stopChargingSession()
+                return
+            }
 
             // STRICT UNPLUG GUARD: If cable is pulled, kill window instantly on frame 1
-            if (!isPreviewSession && !hardwareProvider.isChargerPhysicallyConnected()) {
+            if (!session.isPreview && !hardwareProvider.isChargerPhysicallyConnected()) {
                 stopChargingSession()
                 return
             }
@@ -69,6 +74,24 @@ class ChargingService : Service() {
             "neocharge:charging_stay_awake"
         )
 
+        session = ChargingSession(
+            showOverlay = { overlayController.show { stopChargingSession() } },
+            beginUpdates = {
+                physicsIntegrator.reset()
+                lastFrameTime = System.currentTimeMillis()
+                tickerHandler.post(telemetryLoop)
+            },
+            endUpdates = {
+                tickerHandler.removeCallbacks(telemetryLoop)
+                physicsIntegrator.reset()
+            },
+            dismissOverlay = { overlayController.dismiss() },
+            acquireScreenWakeLock = { acquireWakeLock() },
+            releaseScreenWakeLock = { releaseWakeLock() },
+            scheduleTimeout = { task, delay -> tickerHandler.postDelayed(task, delay); Unit },
+            cancelTimeout = { tickerHandler.removeCallbacks(it) }
+        )
+
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_POWER_CONNECTED)
             addAction(Intent.ACTION_POWER_DISCONNECTED)
@@ -87,47 +110,30 @@ class ChargingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == "PREVIEW_ANIMATION") {
             startChargingSession(isPreview = true)
+        } else if (hardwareProvider.isChargerPhysicallyConnected()) {
+            // Includes ARM while already plugged in, boot and START_STICKY recovery.
+            startChargingSession(isPreview = false)
         }
         return START_STICKY
     }
 
     private fun startChargingSession(isPreview: Boolean) {
-        // Refuse to open if not plugged in (unless user specifically pressed test preview)
-        if (!isPreview && !hardwareProvider.isChargerPhysicallyConnected()) {
-            return
-        }
-
-        if (overlayController.isShowing()) return
-
-        this.isPreviewSession = isPreview
-        physicsIntegrator.reset()
-        lastFrameTime = System.currentTimeMillis()
-
-        acquireWakeLock()
-
-        overlayController.show(onDismissed = {
-            stopChargingSession()
-        })
-
-        tickerHandler.post(telemetryLoop)
-
-        if (isPreview) {
-            tickerHandler.postDelayed({ stopChargingSession() }, 5000L)
-        }
+        session.start(
+            preview = isPreview,
+            permanent = prefs.getBoolean("perm_mode", true),
+            connected = hardwareProvider.isChargerPhysicallyConnected()
+        )
     }
 
     private fun stopChargingSession() {
-        tickerHandler.removeCallbacks(telemetryLoop)
-        overlayController.dismiss()
-        physicsIntegrator.reset()
-        releaseWakeLock()
-        isPreviewSession = false
+        session.stop()
     }
 
     private fun acquireWakeLock() {
         try {
             if (wakeLock?.isHeld == false) {
-                wakeLock?.acquire()
+                // Only wake the display briefly; the attached window owns KEEP_SCREEN_ON.
+                wakeLock?.acquire(10_000L)
             }
         } catch (e: Exception) {
             e.printStackTrace()
