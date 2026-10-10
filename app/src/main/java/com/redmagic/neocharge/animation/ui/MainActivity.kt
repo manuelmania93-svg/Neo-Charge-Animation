@@ -95,7 +95,7 @@ class MainActivity : Activity() {
         optCard.addView(switchPermanent)
 
         val descText = TextView(this).apply {
-            text = "Stays glowing until unplugged (tap anywhere or unplug to close)."
+            text = "ON: stays until unplugged. OFF: closes after 7 seconds. Tap anywhere to close. Changes apply to the next charging session."
             textSize = 11f
             setTextColor(Color.parseColor("#777788"))
             setPadding(0, 0, 0, 20)
@@ -105,7 +105,14 @@ class MainActivity : Activity() {
 
         root.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(1, 40) })
 
+        fun canStartOverlay(): Boolean {
+            if (Settings.canDrawOverlays(this)) return true
+            Toast.makeText(this, "Allow 'Appear on top' before arming or previewing NeoCharge.", Toast.LENGTH_LONG).show()
+            return false
+        }
+
         val btnActivate = createCyberButton("ARM NEOCHARGE ENGINE", "#E60026") {
+            if (!canStartOverlay()) return@createCyberButton
             val intent = Intent(this, ChargingService::class.java)
             ContextCompat.startForegroundService(this, intent)
             Toast.makeText(this, "\u26A1 NeoCharge Armed & Ready!", Toast.LENGTH_LONG).show()
@@ -113,6 +120,7 @@ class MainActivity : Activity() {
         root.addView(btnActivate)
 
         val btnTest = createCyberButton("TEST ANIMATION PREVIEW", "#16161E") {
+            if (!canStartOverlay()) return@createCyberButton
             val intent = Intent(this, ChargingService::class.java).apply {
                 action = "PREVIEW_ANIMATION"
             }
